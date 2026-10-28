@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         VTO Phone Alerts PC
+// @name         VTO Phone Alerts
 // @namespace    martin.vto.notify
 // @version      2.10
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-phone-alerts.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-phone-alerts.user.js
-// @description  Phone alerts via Pushover for the VTO script on the PC: one loud repeating Critical Alert when you are still not signed in after 1 minute (the virtual passkey did not finish), and normal pushes for accepted / missed / checks stalled. Critical Alert On/Off mute in the VTO box.
+// @description  (PC) Phone alerts via Pushover for the VTO script on the PC: one loud repeating Critical Alert when you are still not signed in after 1 minute (the virtual passkey did not finish), and normal pushes for accepted / missed / checks stalled. Critical Alert On/Off mute in the VTO box.
 // @match        https://atoz.amazon.work/voluntary_time_off*
 // @match        https://atoz-login.amazon.work/*
 // @match        https://atozworkforce.idprism-auth.amazon.com/*

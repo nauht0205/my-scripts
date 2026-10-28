@@ -4,7 +4,7 @@
 // @version      2.10
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-phone-alerts.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-phone-alerts.user.js
-// @description  Phone alerts via Pushover for the VTO script on the Mac: one loud repeating Critical Alert when you are still not signed in after 1 minute (the virtual passkey did not finish), and normal pushes for accepted / missed / checks stalled. Critical Alert On/Off mute in the VTO box.
+// @description  (Mac) Phone alerts via Pushover for the VTO script on the Mac: one loud repeating Critical Alert when you are still not signed in after 1 minute (the virtual passkey did not finish), and normal pushes for accepted / missed / checks stalled. Critical Alert On/Off mute in the VTO box.
 // @match        https://atoz.amazon.work/voluntary_time_off*
 // @match        https://atoz-login.amazon.work/*
 // @match        https://atozworkforce.idprism-auth.amazon.com/*
