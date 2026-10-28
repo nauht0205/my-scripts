@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.62
+// @version      4.63
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @description  (PC) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, passkey reset button, clear status box
@@ -240,7 +240,8 @@
   // 4.61 (Martin, 10/28): the time on log lines stays white too; only the text after it takes the line's color.
   // 4.62 (Martin, 10/28): new sounds at 90% volume (was 15%): accepted = fanfare (W3), accepting = double blips that
   //   keep going until Amazon answers and stop the moment it does (A3 long), missed = two falling notes (M4).
-  const VERSION = '4.62';
+  // 4.63 (Martin, 10/28): all box text off-white (#ece8df, like Transfer Schedule); section names sky blue (#60a5fa).
+  const VERSION = '4.63';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1721,7 +1722,7 @@
     loadFont();
     box = document.createElement('div');
     // 4.26: as wide as its longest fixed line (header, status lines, In-N-Out); long lines wrap; scrolls up and down
-    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:#0d111c;color:#ffffff;font:13px/1.6 "JetBrains Mono",Menlo,Consolas,monospace;border:1px solid #272d3b;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.55);user-select:text;-webkit-user-select:text;cursor:auto;';
+    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:#0d111c;color:#ece8df;font:13px/1.6 "JetBrains Mono",Menlo,Consolas,monospace;border:1px solid #272d3b;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.55);user-select:text;-webkit-user-select:text;cursor:auto;';
     // 4.30: you can select and copy any box text (Cmd+C); mouse, selection and copy events stay in the box, not the page
     ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'selectstart', 'copy'].forEach(function (n) { box.addEventListener(n, function (e) { e.stopPropagation(); }); });
     box.id = 'vto-box';
@@ -1761,8 +1762,9 @@
   /* ================= LOG COLORS ================= */
   // text colors: Dracula's bright set (from Martin's picture); background: the darker purple Martin preferred
   const C_ACCEPT = '#50fa7b';   // green: accepted
-  const C_BASE = '#ffffff';     // white: normal box text (4.13; was yellow)
+  const C_BASE = '#ece8df';     // 4.63: off-white normal box text, same as Transfer Schedule (was pure white)
   const C_YEL = '#f6ff9c';      // yellow: missed / [Closed]
+  const C_SECT = '#60a5fa';     // 4.63: sky blue section names (lighter than the header bar)
   const C_HEAD2 = '#2563eb';    // 4.60: medium blue: top bar while watching + section names (was purple)
   const C_MISS = '#f82d2d';     // 4.60: red: missed / full
   const C_HEADTXT = '#ece8df';  // 4.60: off-white header text on the blue bar (same as Transfer Schedule)
@@ -1771,7 +1773,7 @@
   const C_WARN = '#ffa94d';     // orange: warnings
   const C_CYAN = '#8be9fd';     // cyan: [Auto] [Reset]
   const C_RED = '#ff5555';      // red: [Passkey] (Amazon asked for your passkey)
-  const C_TAG = '#ffffff';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
+  const C_TAG = '#ece8df';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
   // log line colors: accepted = green; signed out, delays, errors = orange; missed = pink; everything else white
   function lineColor(t) {
     if (t.indexOf('SIGNED OUT') > -1 || t.indexOf('not logged in') > -1) return C_WARN;   // 4.20: orange
@@ -1793,7 +1795,7 @@
     const d = document.createElement('div');
     if (item && item.heading) {   // 4.13: section name - purple capitals with a line above
       d.textContent = item.heading;
-      d.style.cssText = 'border-top:1px solid #272d3b;margin-top:7px;padding-top:7px;color:' + C_HEAD2 + ';font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;';
+      d.style.cssText = 'border-top:1px solid #272d3b;margin-top:7px;padding-top:7px;color:' + C_SECT + ';font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;';
       return d;
     }
     // 4.26: fixed lines (status, In-N-Out) never wrap and set the box width; all other lines wrap inside that
