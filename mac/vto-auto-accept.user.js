@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.64
+// @version      4.65
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, passkey reset button, clear status box
@@ -240,7 +240,8 @@
   //   keep going until Amazon answers and stop the moment it does (A3 long), missed = two falling notes (M4).
   // 4.63 (Martin, 10/28): all box text off-white (#ece8df, like Transfer Schedule); section names sky blue (#60a5fa).
   // 4.64 (Martin, 10/28): Authentication Session: "session ended (10h 7m)" in pink (was "Amazon signed you out", orange); "Auto (3s)" in teal like launcher opened (was "signed in automatically", cyan).
-  const VERSION = '4.64';
+  // 4.65 (Martin, 10/28): "you clicked log out" and "you signed out inside A to Z" are purple (were orange).
+  const VERSION = '4.65';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -975,7 +976,7 @@
       : e.k === 'out' ? (e.why === 'manual' ? 'you signed out inside A to Z' : e.why === 'reset' ? 'you clicked log out' : 'session ended') + (e.after ? ' (' + gapText(e.after / 60000) + ')' : '')
       : (e.how === 'auto' ? 'Auto' : 'you signed in') + ' (' + e.secs + 's)';
     // 4.64: session ended = pink like launcher closed; Auto = teal like launcher opened
-    const c = e.k === 'open' ? C_MINT : e.k === 'close' ? C_BAD : e.k === 'out' ? (e.why === 'manual' || e.why === 'reset' ? C_WARN : C_BAD) : e.how === 'auto' ? C_MINT : C_CYAN;
+    const c = e.k === 'open' ? C_MINT : e.k === 'close' ? C_BAD : e.k === 'out' ? (e.why === 'manual' || e.why === 'reset' ? C_PURPLE : C_BAD) : e.how === 'auto' ? C_MINT : C_CYAN;
     return { fix: true, parts: [{ t: '  ' + sessWhen(e.t) + '  ', c: C_BASE }, { t: txt, c: c }] };
   }
 
@@ -1768,6 +1769,7 @@
   const C_HEAD2 = '#2563eb';    // 4.60: medium blue: top bar while watching + section names (was purple)
   const C_MISS = '#f82d2d';     // 4.60: red: missed / full
   const C_HEADTXT = '#ece8df';  // 4.60: off-white header text on the blue bar (same as Transfer Schedule)
+  const C_PURPLE = '#bd93f9';   // 4.65: purple: you clicked log out / you signed out inside A to Z
   const C_MINT = '#a6f0c6';     // mint: [Remembered]
   const C_BAD = '#ff92df';      // pink: passkey close/due (signed out + check problems are orange since 4.20, missed is yellow since 4.13)
   const C_WARN = '#ffa94d';     // orange: warnings
