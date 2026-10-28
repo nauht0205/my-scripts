@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.7
+// @version      6.8
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.7';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.8';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -72,7 +72,7 @@
     sundayEarliestStart: '13:00',         // a Sunday shift must start at 1:00 PM or later
     latestEnd: '01:30',                   // a time after midnight means the next day
     maxDaysPerWeek: 4,                    // 5+ working days = no match (part time and full time)
-    fullTimeMinShiftHours: 10,            // full time must be 10-hour shifts (4x10)
+    // 6.8: full time no longer has to be 10-hour shifts; days and times above still decide a match
   };
 
   // VTO protection: no transfer requests from 30 s before :00 to 60 s after (:59:30 - :01:00).
@@ -238,9 +238,6 @@
       if (earlySun) reasons.push('Sun starts ' + earlySun + ' (needs ' + PREFS.sundayEarliestStart + '+)');
     }
     if (days.length > PREFS.maxDaysPerWeek) reasons.push(days.length + ' days/wk');
-    if (m.type === 'FULL_TIME' && (m.averageShiftLength || 0) < PREFS.fullTimeMinShiftHours) {
-      reasons.push('full time needs 10h shifts');
-    }
     return { match: reasons.length === 0, reasons: [...new Set(reasons)], sunday: days.some(d => d.day === 'SUNDAY') };
   }
 
