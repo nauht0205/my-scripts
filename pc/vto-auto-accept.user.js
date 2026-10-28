@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.59
+// @version      4.62
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @description  (PC) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, passkey reset button, clear status box
@@ -235,7 +235,12 @@
   // 4.58 (Martin, 10/28): the orange SIGNED OUT bar, its box line, the SIGNED OUT tab title and its beep on the VTO page are removed.
   // 4.59 (Martin, 10/28): "log out" button word is orange. New "Priority:" button under Critical Alert:
   // Night Shift (dark blue) = night shift VTOs first, then soonest; Normal (orange) = soonest date/time first only.
-  const VERSION = '4.59';
+  // 4.60 (Martin, 10/28): new box colors: darker navy background, medium blue header bar and section names, off-white header text,
+  // white header buttons with blue words, missed / full in red (#f82d2d), errors stay orange, white time on last errors and VTO events lines.
+  // 4.61 (Martin, 10/28): the time on log lines stays white too; only the text after it takes the line's color.
+  // 4.62 (Martin, 10/28): new sounds at 90% volume (was 15%): accepted = fanfare (W3), accepting = double blips that
+  //   keep going until Amazon answers and stop the moment it does (A3 long), missed = two falling notes (M4).
+  const VERSION = '4.62';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -375,7 +380,7 @@
     while (m.length > 30) m.shift();
     ls.set('vtoMisses', m);
     addResult('missed', desc, '', null);
-    beep(300, 300);
+    soundMiss();
   }
   /* ================= RESULTS + ERRORS (short lines in the box, details in "copy") ================= */
   const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
@@ -506,19 +511,43 @@
   }
 
   /* ================= SOUND ================= */
-  function beep(freq, ms) {
+  // 4.62: Martin's picks from the VTO Sound Picker page (same sound engine), at 90% volume.
+  // notes: [start ms, Hz, length ms, wave]
+  const SOUND_VOL = 0.9;
+  const SND_WIN = [[0, 523, 120, 'triangle'], [120, 659, 120, 'triangle'], [240, 784, 120, 'triangle'], [360, 1047, 520, 'triangle']];   // W3 fanfare
+  const SND_MISS = [[0, 440, 180, 'square'], [220, 294, 380, 'square']];   // M4 down-down
+  const SND_ACCEPTING = [0, 1, 2, 3, 4, 5, 6, 7].reduce(function (a, i) { return a.concat([[i * 380, 880, 60, 'square'], [i * 380 + 100, 880, 60, 'square']]); }, []);   // A3 long, up to 3 s
+  function playNotes(notes) {
     try {
       const C = window.AudioContext || window.webkitAudioContext;
       const a = new C();
-      const o = a.createOscillator();
-      const g = a.createGain();
-      o.frequency.value = freq;
-      g.gain.value = 0.15;
-      o.connect(g); g.connect(a.destination);
-      o.start();
-      setTimeout(function () { try { o.stop(); a.close(); } catch (e) {} }, ms);
-    } catch (e) {}
+      const tame = { sine: 1, triangle: 0.9, square: 0.35, sawtooth: 0.35 };   // square waves sound louder at the same gain
+      const base = a.currentTime + 0.02;
+      let end = 0;
+      notes.forEach(function (n) {
+        const o = a.createOscillator(), g = a.createGain();
+        const st = base + n[0] / 1000, en = st + n[2] / 1000, peak = SOUND_VOL * (tame[n[3]] || 1);
+        o.type = n[3]; o.frequency.setValueAtTime(n[1], st);
+        g.gain.setValueAtTime(0.0001, st); g.gain.exponentialRampToValueAtTime(peak, st + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, en);
+        o.connect(g); g.connect(a.destination); o.start(st); o.stop(en + 0.05);
+        end = Math.max(end, n[0] + n[2]);
+      });
+      setTimeout(function () { try { a.close(); } catch (e) {} }, end + 300);
+      return a;
+    } catch (e) { return null; }
   }
+  let acceptingSound = null, resultSoundUntil = 0;
+  function stopAcceptingSound() { if (acceptingSound) { try { acceptingSound.close(); } catch (e) {} acceptingSound = null; } }
+  function soundAccepting() {
+    // not over a result sound still playing (back-to-back accepts in a multi-VTO drop), and only one at a time
+    if (acceptingSound || Date.now() < resultSoundUntil) return;
+    acceptingSound = playNotes(SND_ACCEPTING);
+    const mine = acceptingSound;
+    setTimeout(function () { if (acceptingSound === mine) acceptingSound = null; }, 3200);
+  }
+  function soundResult(notes) { stopAcceptingSound(); resultSoundUntil = Date.now() + 1000; playNotes(notes); }
+  function soundWin() { soundResult(SND_WIN); }
+  function soundMiss() { soundResult(SND_MISS); }
 
   /* ================= CAPTURE THE PAGE'S OWN VtoPage REQUEST ================= */
   function saveTemplate(body, src) {
@@ -1159,6 +1188,7 @@
   async function directAccept(id, desc, prevN, prevB) {
     const overlapAtSend = inFlight.size > 0 || pageAccepts > 0;   // another accept (ours or the page's) still waiting for its answer
     inFlight.add(id); inFlightAt[id] = Date.now();
+    soundAccepting();   // 4.62
     lastDirectSent = Date.now();
     const t0 = Date.now();
     const ctl = new AbortController();
@@ -1193,7 +1223,7 @@
         setLast('ok', 'ACCEPTED (direct) ' + desc);
         logAction('OK ACCEPTED (direct, ' + ms + 'ms): ' + desc);
         document.title = 'VTO ACCEPTED';
-        beep(1000, 250); setTimeout(function () { beep(1300, 400); }, 300);
+        soundWin();
         // 4.51: no page refresh after a win (it made the script blind 1-3 s while more VTOs may open); checks read Amazon directly
       } else if (res.status >= 500) {
         throw new Error('HTTP ' + res.status);
@@ -1223,7 +1253,7 @@
           setLast('ok', 'ACCEPTED (direct) ' + desc);
           logAction('OK ACCEPTED (Amazon says already yours, SMS-2000, ' + ms + 'ms): ' + desc);
           document.title = 'VTO ACCEPTED';
-          beep(1000, 250); setTimeout(function () { beep(1300, 400); }, 300);
+          soundWin();
           return;
         }
         if (full && prevSt && prevSt.res === 'full' && !prevSt.closedSeen) {
@@ -1256,6 +1286,7 @@
     } finally {
       clearTimeout(to);
       inFlight.delete(id); delete inFlightAt[id];
+      if (!inFlight.size) stopAcceptingSound();   // 4.62: no answer to wait for any more (error / timeout)
       // retry / next open VTO right away
       if (DIRECT_ACCEPT && lastOpen.length && !signedOutFlag) { try { fireDirect(lastOpen); } catch (e) {} }
     }
@@ -1567,7 +1598,7 @@
         setLast('ok', 'ACCEPTED (via clicks) ' + what);
         logAction('OK ACCEPTED (via clicks): ' + what);
         document.title = 'VTO ACCEPTED';
-        beep(1000, 250); setTimeout(function () { beep(1300, 400); }, 300);
+        soundWin();
       }
       return;
     }
@@ -1633,11 +1664,12 @@
   }
   // 4.26: solid buttons (box purple, white text), lighter on hover, pressed down a little on click
   function mkBtn(label, fn, color, bg) {
-    bg = bg || '#1d1a2b';   // in the dark box body a button uses a lighter purple so it still looks like a button
+    bg = bg || '#ffffff';   // 4.60: header buttons are white with blue words (was purple)
+    if (!color && bg === '#ffffff') color = C_HEAD2;
     const b = document.createElement('button');
     b.textContent = label;
     b.style.cssText = 'background:' + bg + ';color:' + (color || '#ffffff') + ';border:0;border-radius:5px;font:bold 11px/1.4 \'JetBrains Mono\',Menlo,Consolas,monospace;padding:2px 8px;cursor:pointer;display:inline-flex;align-items:center;vertical-align:middle;box-shadow:0 1px 2px rgba(0,0,0,.4);';
-    b.addEventListener('mouseenter', function () { b.style.background = bg === '#1d1a2b' ? '#3a3352' : '#4d4470'; });
+    b.addEventListener('mouseenter', function () { b.style.background = bg === '#ffffff' ? '#dbe6ff' : '#34405c'; });   // 4.60
     b.addEventListener('mouseleave', function () { b.style.background = bg; b.style.transform = ''; });
     b.addEventListener('mousedown', function () { b.style.transform = 'translateY(1px)'; });
     b.addEventListener('mouseup', function () { b.style.transform = ''; });
@@ -1689,7 +1721,7 @@
     loadFont();
     box = document.createElement('div');
     // 4.26: as wide as its longest fixed line (header, status lines, In-N-Out); long lines wrap; scrolls up and down
-    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:#1d1a2b;color:#ffffff;font:13px/1.6 "JetBrains Mono",Menlo,Consolas,monospace;border:1px solid #352d4a;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.55);user-select:text;-webkit-user-select:text;cursor:auto;';
+    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:#0d111c;color:#ffffff;font:13px/1.6 "JetBrains Mono",Menlo,Consolas,monospace;border:1px solid #272d3b;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.55);user-select:text;-webkit-user-select:text;cursor:auto;';
     // 4.30: you can select and copy any box text (Cmd+C); mouse, selection and copy events stay in the box, not the page
     ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'selectstart', 'copy'].forEach(function (n) { box.addEventListener(n, function (e) { e.stopPropagation(); }); });
     box.id = 'vto-box';
@@ -1705,7 +1737,7 @@
     flashEl.style.cssText = 'font-size:11px;';
     btns.appendChild(flashEl);
     // 4.44: "log out" sits in the header (two clicks within 5 s); Critical Alert moved to the line where log out was
-    btns.appendChild(mkBtn('log out', resetPasskey, C_WARN));   // 4.59: orange (was pink)
+    btns.appendChild(mkBtn('log out', resetPasskey));   // 4.60: white with blue words like the other header buttons
     // 4.36: "test" asks VTO Phone Alerts to send a test alert to your phone (it holds the Pushover keys). Not near :00.
     btns.appendChild(mkBtn('test', function () {
       if (nearDrop()) { flash('near :00 - try after :01'); return; }
@@ -1731,7 +1763,9 @@
   const C_ACCEPT = '#50fa7b';   // green: accepted
   const C_BASE = '#ffffff';     // white: normal box text (4.13; was yellow)
   const C_YEL = '#f6ff9c';      // yellow: missed / [Closed]
-  const C_HEAD2 = '#bd93f9';    // purple: top bar while watching + section names
+  const C_HEAD2 = '#2563eb';    // 4.60: medium blue: top bar while watching + section names (was purple)
+  const C_MISS = '#f82d2d';     // 4.60: red: missed / full
+  const C_HEADTXT = '#ece8df';  // 4.60: off-white header text on the blue bar (same as Transfer Schedule)
   const C_MINT = '#a6f0c6';     // mint: [Remembered]
   const C_BAD = '#ff92df';      // pink: passkey close/due (signed out + check problems are orange since 4.20, missed is yellow since 4.13)
   const C_WARN = '#ffa94d';     // orange: warnings
@@ -1744,17 +1778,22 @@
     if (t.indexOf('check gap') > -1 || t.indexOf('fallback:') > -1 || t.indexOf('HIDDEN') > -1 || t.indexOf('DELAYED') > -1 ||
         t.indexOf('was asleep') > -1 || t.indexOf('no internet') > -1 || t.indexOf('internet back') > -1) return C_WARN;
     if (t.indexOf('OK ACCEPTED') > -1) return C_ACCEPT;
+    if (t.indexOf('MISSED') > -1 || t.indexOf('NOT ACCEPTED') > -1 || /\bfull\b/i.test(t) || /\sX\s/.test(t)) return C_MISS;   // 4.60: red (missed / full)
     if (t.indexOf('!!') > -1 || /error|failed|rejected/i.test(t)) return C_WARN;   // 4.26: anything error related is orange (was pink)
-    if (t.indexOf('MISSED') > -1 || t.indexOf('NOT ACCEPTED') > -1 || /\sX\s/.test(t)) return C_BAD;
     return null;
   }
   // anything about an actual sign-out is fully red
+  // 4.60: "  04:35:07 PM rest" -> white time, the rest in its color
+  function timeParts(t, c) {
+    const m = /^(\s*\d{1,2}:\d{2}:\d{2}\s?[AP]M )([\s\S]*)$/.exec(t);
+    return m ? [{ t: m[1], c: C_BASE }, { t: m[2], c: c }] : [{ t: t, c: c }];
+  }
   function signParts(t) { return [{ t: t, c: C_WARN }]; }   // 4.20: orange
   function mkLine(item) {
     const d = document.createElement('div');
     if (item && item.heading) {   // 4.13: section name - purple capitals with a line above
       d.textContent = item.heading;
-      d.style.cssText = 'border-top:1px solid #34304a;margin-top:7px;padding-top:7px;color:' + C_HEAD2 + ';font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;';
+      d.style.cssText = 'border-top:1px solid #272d3b;margin-top:7px;padding-top:7px;color:' + C_HEAD2 + ';font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;';
       return d;
     }
     // 4.26: fixed lines (status, In-N-Out) never wrap and set the box width; all other lines wrap inside that
@@ -1762,11 +1801,11 @@
     const fix = !!(item && item.fix);
     let parts = typeof item === 'string' ? [{ t: item, c: lineColor(item) }] : (item.parts || [item]);
     let indent = false;
-    if (!fix && parts.length === 1 && /^  \S/.test(parts[0].t)) { parts = [{ t: parts[0].t.slice(2), c: parts[0].c, w: parts[0].w }]; indent = true; }
+    if (!fix && parts.length && /^  \S/.test(parts[0].t || '')) { parts = [{ t: parts[0].t.slice(2), c: parts[0].c, w: parts[0].w }].concat(parts.slice(1)); indent = true; }   // 4.60: also lines with a white time
     d.style.cssText = fix ? 'white-space:pre;tab-size:4;'
       : 'white-space:pre-wrap;word-break:break-word;tab-size:4;width:0;min-width:100%;' + (indent ? 'padding-left:2ch;box-sizing:border-box;' : '');
     parts.forEach(function (p) {
-      if (p.btn) { const b = mkBtn(p.btn, p.fn, p.c, p.bg || '#3a3352'); b.style.marginLeft = p.first ? '0' : '8px'; d.appendChild(b); return; }   // 4.26: a button inside a line
+      if (p.btn) { const b = mkBtn(p.btn, p.fn, p.c, p.bg || '#1b2130'); b.style.marginLeft = p.first ? '0' : '8px'; d.appendChild(b); return; }   // 4.26: a button inside a line
       const sp = document.createElement('span');
       sp.textContent = p.t;
       if (p.c) sp.style.color = p.c;
@@ -1866,7 +1905,7 @@
 
     // 4.26: API ON while good checks are coming in; API OFF (header turns orange) when signed out, no list request yet, or checks delayed
     box.__head.style.background = bg;
-    box.__head.style.color = '#1d1a2b';
+    box.__head.style.color = bg === C_HEAD2 ? C_HEADTXT : '#0d111c';   // 4.60: off-white on blue, dark on orange/green
     headLabel.textContent = 'VTO ' + VERSION + ' | ' + status;   // 4.44: API ON / OFF removed (the header color already shows it)
     bodyEl.style.display = collapsed ? 'none' : 'block';
     if (collapsed) { boxKey = ''; return; }
@@ -1882,20 +1921,20 @@
     const sv = stayGet();
     if (sv) L.push({ fix: true, t: 'signed in: ' + dur(Date.now() - sv.since) + ' ago | session reset at ~' + new Date(sv.since + 36000000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) });   // 4.51: Amazon's 10 h limit   // 4.46: just this, on its own line (stay-click counts are kept in copy only)
     pkBoxLines().forEach(function (x) { L.push(x); });
-    L.push({ fix: true, parts: [{ t: 'today: ' }, { t: 'accepted ' + s.accepted, c: C_ACCEPT }, { t: ' | ' }, { t: 'missed ' + s.lost, c: C_YEL }, { t: ' | ' }, { t: 'errors ' + s.errors, c: C_WARN }] });
+    L.push({ fix: true, parts: [{ t: 'today: ' }, { t: 'accepted ' + s.accepted, c: C_ACCEPT }, { t: ' | ' }, { t: 'missed ' + s.lost, c: C_MISS }, { t: ' | ' }, { t: 'errors ' + s.errors, c: C_WARN }] });
     if (!signedOutFlag && template && age > 8) L.push({ t: '!! CHECKS DELAYED - last good check ' + Math.round(age) + 's ago', c: C_WARN });
     if (document.visibilityState === 'hidden' && timerMode !== 'worker') L.push({ t: '!! TAB HIDDEN - checks may slow down', c: C_WARN });
     if (lastError && age > 3) L.push({ t: 'check problem: ' + lastError, c: C_WARN });   // 4.20: orange
     const clearedAt = ls.get('vtoBoxClearedAt', 0);
     const errResetAt = ls.get('vtoErrReset', 0);
     const ers = ls.get('vtoErrors', []).filter(function (x) { return x.day === today() && x.t > clearedAt && x.t > errResetAt; }).slice(-3);
-    if (ers.length) { L.push({ heading: 'last errors' }); ers.forEach(function (er) { L.push({ t: '  ' + errorLine(er), c: C_WARN }); }); }
+    if (ers.length) { L.push({ heading: 'last errors' }); ers.forEach(function (er) { L.push({ parts: timeParts('  ' + errorLine(er), C_WARN) }); }); }
     const res = ls.get('vtoResults', []).filter(function (x) { return x.day === today() && x.t > clearedAt; }).slice(-6);
-    if (res.length) { L.push({ heading: 'VTO events' }); res.forEach(function (r) { L.push({ t: '  ' + resultLine(r), c: r.kind === 'ok' ? C_ACCEPT : C_YEL }); }); }
+    if (res.length) { L.push({ heading: 'VTO events' }); res.forEach(function (r) { L.push({ parts: timeParts('  ' + resultLine(r), r.kind === 'ok' ? C_ACCEPT : C_MISS) }); }); }
     const pad0 = (r) => String(r).replace(/^(\d):/, '0$1:');   // older lines: 1:05:09 AM -> 01:05:09 AM
     // 4.26: one log: reloads and log lines together by time, last 5
     const logs = boxLog(ls.get('vtoReloads', []), ls.get('vtoLog', []), 5);
-    if (logs.length) { L.push({ heading: 'log' }); logs.forEach(function (r) { L.push('  ' + pad0(r).replace(' (no refresh - direct accept handles it)', '')); }); }   // 4.13: that note stays in copy only   // (older-style stay lines stay in copy only)
+    if (logs.length) { L.push({ heading: 'log' }); logs.forEach(function (r) { const t = '  ' + pad0(r).replace(' (no refresh - direct accept handles it)', ''); L.push({ parts: timeParts(t, lineColor(t)) }); }); }   // 4.61: white time   // 4.13: that note stays in copy only   // (older-style stay lines stay in copy only)
     // 4.40: Sessions replaces In-N-Out (the In-N-Out lines are still kept in copy)
     const sess = ls.get('vtoSessions', []).slice(-4);   // 4.50: latest 4 lines only (Martin keeps the box narrow); copy still has them all
     if (sess.length) {
