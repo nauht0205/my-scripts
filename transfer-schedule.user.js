@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.6
+// @version      6.7
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.6';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.7';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -91,6 +91,9 @@
   // ---------- storage ----------
   const loadJSON = (k, d) => { try { const v = JSON.parse(GM_getValue(k, '')); return v == null ? d : v; } catch (e) { return d; } };
   const saveJSON = (k, v) => GM_setValue(k, JSON.stringify(v));
+  // 6.7: check log for the copy button (newest last, last 200 lines kept)
+  const stamp = () => { const d = new Date(); return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }); };
+  function log(line) { const l = loadJSON('twLog', []); l.push(stamp() + ' ' + line); saveJSON('twLog', l.slice(-200)); }
 
   // ---------- employee id: learned passively from the browser's request log ----------
   let employeeId = EMPLOYEE_ID_OVERRIDE || GM_getValue('employeeId', '');
@@ -154,11 +157,14 @@
       },
       body: JSON.stringify({ operationName, variables, query }),
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status + (res.status === 401 || res.status === 403 ? ' (signed out?)' : ''));
+    // 6.7: every error carries what Amazon actually sent back (cut to 300 characters), for the copy button
+    const text = await res.text().catch(() => '');
+    const said = t => ' | Amazon said: ' + String(t || '(nothing)').replace(/\s+/g, ' ').slice(0, 300);
+    if (!res.ok) throw new Error(operationName + ': HTTP ' + res.status + (res.status === 401 || res.status === 403 ? ' (signed out?)' : '') + said(text));
     let json;
-    try { json = JSON.parse(await res.text()); } catch (e) { throw new Error('non-JSON reply (signed out?)'); }
-    if (json.errors && json.errors.length) throw new Error(operationName + ': ' + (json.errors[0].message || 'API error'));
-    if (!json.data) throw new Error(operationName + ': empty reply');
+    try { json = JSON.parse(text); } catch (e) { throw new Error(operationName + ': non-JSON reply (signed out?)' + said(text)); }
+    if (json.errors && json.errors.length) throw new Error(operationName + ': ' + (json.errors[0].message || 'API error') + said(JSON.stringify(json.errors)));
+    if (!json.data) throw new Error(operationName + ': empty reply' + said(text));
     return json.data;
   }
 
@@ -411,6 +417,7 @@
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:4px;align-items:center;';
     btns.appendChild(mkBtn('check', checkNow));
+    btns.appendChild(mkBtn('copy', () => copyText(report()).then(ok => setStatus(ok ? 'ok' : 'err', ok ? 'copied - paste it to Claude' : 'copy failed'))));
     btns.appendChild(mkBtn('test', () => {
       notify('Transfer Schedule · test', 'Alerts are working. This was sent at the same priority as a real match.\n\nThe "Open ' + SITES[0].name + '" button should open the A to Z app on ' + SITES[0].name + '\'s schedule list.', 5, 'star', SITES[0]);
       setStatus('ok', 'test alert sent ' + clock(Date.now()));
@@ -496,6 +503,26 @@
     }).join(''));
   }
 
+  // 6.7: everything the box knows, as text (the "copy" button). No Pushover keys in it.
+  function report() {
+    const t = x => x ? new Date(x).toLocaleString() : 'never';
+    const stats = loadJSON('siteStat', {});
+    return [
+      'Transfer Schedule ' + VERSION,
+      'time ' + new Date().toString(),
+      'page ' + location.pathname + ' | tab ' + document.visibilityState,
+      'employee id ' + (employeeId ? 'known' : 'NOT known yet'),
+      'last check ' + t(GM_getValue('lastCheckAt', 0)) + ' | next ' + t(GM_getValue('nextDue', 0)) + ' | running ' + (GM_getValue('running', 0) ? t(GM_getValue('running', 0)) : 'no'),
+      'every ' + INTERVAL_MIN + ' min | VTO pause ' + (inQuietWindow() ? 'ON now' : 'off now') + ' (8 AM-2 PM drops only)',
+      'failed checks in a row ' + JSON.stringify(loadJSON('err', { fails: 0 })),
+      'status ' + JSON.stringify(loadJSON('status2', {})),
+      '--- sites',
+      SITES.map(x => '#' + x.rank + ' ' + x.name + (x.onlyFlex ? ' (flex only)' : '') + ': ' + JSON.stringify(stats[x.name] || null)).join('\n'),
+      '--- log',
+      loadJSON('twLog', []).join('\n') || 'empty',
+    ].join('\n');
+  }
+
   function render() {
     if (!box) return;
     const st = loadJSON('status2', { kind: '', text: '' });
@@ -526,7 +553,7 @@
         cell(isOpen ? '▾' : '▸', 2, C.cyan) + cell('#' + s.rank + ' ' + s.name, 9, C.text, true) + '</span>';
       let status;
       if (!d) status = cell('…', 0, C.text);
-      else if (d.error) status = cell('error', 0, C.orange, true);
+      else if (d.error) status = `<span title="${esc(d.error)}">${cell('error', 0, C.orange, true)}</span>`;
       else if (s.onlyFlex) status = flexText(d.flexOpen || 0, d.flexListed || 0);
       else {
         status = cell(STAR + ' ' + d.match, 6, d.match ? C.green : C.text, d.match > 0) +
@@ -638,17 +665,32 @@
     const errors = [];
     const baseline = [];
 
+    log('check started');
     for (const site of SITES) {
-      if (inQuietWindow(SITE_LEAD_SEC)) { render(); return 'quiet'; }
+      if (inQuietWindow(SITE_LEAD_SEC)) { log('paused for the VTO drop, will finish after :01'); render(); return 'quiet'; }
       try {
-        const r = await checkSite(site, seen);
+        const t0 = Date.now();
+        let r;
+        // 6.7: a site that fails is tried once more after 5 s before it counts as an error
+        try { r = await checkSite(site, seen); }
+        catch (e1) {
+          log(site.name + ' failed, trying again in 5 s: ' + e1.message);
+          await sleep(5000);
+          if (inQuietWindow(SITE_LEAD_SEC)) throw e1;
+          r = await checkSite(site, seen);
+          log(site.name + ' ok on the second try');
+        }
+        log(site.name + ' ok (' + ((Date.now() - t0) / 1000).toFixed(1) + ' s): ' + (site.onlyFlex
+          ? r.flexOpen + '/' + r.flexListed + ' flex open'
+          : r.openMatches + ' match, ' + (r.openCount - r.openMatches) + ' no match' + (r.flexListed ? ', ' + r.flexOpen + '/' + r.flexListed + ' flex open' : '')));
         saveJSON('seen2', seen);
         if (r.firstTime) baseline.push(site.onlyFlex
           ? `#${site.rank} ${site.name}: ${r.flexOpen}/${r.flexListed} flex open`
           : `#${site.rank} ${site.name}: ⭐ ${r.openMatches}  ✗ ${r.openCount - r.openMatches}`);
       } catch (e) {
         errors.push(site.name + ': ' + e.message);
-        setSite(site.name, { error: e.message });
+        log('!! ' + site.name + ' error: ' + e.message);
+        setSite(site.name, { error: e.message, at: Date.now() });
       }
       await sleep(1500 + Math.random() * 1500);
     }
@@ -673,7 +715,6 @@
       if (es.inError) notify('Transfer Schedule · recovered', 'Checks are working again.', 3, 'green_circle');
       es.fails = 0;
       es.inError = false;
-      GM_setValue('lastCheckAt', Date.now());
       const today = chicagoNow().date;
       if (DAILY_SUMMARY && !baseline.length && GM_getValue('summaryDay', '') !== today) {
         const s = loadJSON('siteStat', {});
@@ -687,6 +728,8 @@
       }
     }
     saveJSON('err', es);
+    GM_setValue('lastCheckAt', Date.now());   // 6.7: "last" = last finished check, even if a site failed (was: only when all sites worked)
+    log('check finished' + (errors.length ? ', ' + errors.length + ' site' + (errors.length > 1 ? 's' : '') + ' failed' : ', all sites ok'));
     return 'done';
   }
 
@@ -710,7 +753,7 @@
     checking = true;
     render();
     let result = 'done';
-    try { result = await runCheck(); } catch (e) { setStatus('err', e.message); }
+    try { result = await runCheck(); } catch (e) { setStatus('err', e.message); log('!! check stopped: ' + e.message); }
     checking = false;
     GM_setValue('running', 0);
     GM_setValue('nextDue', result === 'quiet'
