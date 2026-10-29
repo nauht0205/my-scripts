@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.65
+// @version      4.66
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
-// @description  (PC) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, passkey reset button, clear status box
+// @description  (PC) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
 // @match        https://atoz.amazon.work/*
 // @match        https://atoz-login.amazon.work/*
 // @match        https://atozworkforce.idprism-auth.amazon.com/*
@@ -97,7 +97,7 @@
       const nav = parseInt(getShared('vtoNav') || '0', 10);
       const navKnown = getShared('vtoNavApi') === '1';
       const sentHere = left && t0 - left < 15000 && left >= vtoHb - 10000 && (!navKnown || (nav && nav <= left + 1000 && left - nav < 15000));
-      // 4.25: you pressed "reset passkey" in the VTO box a moment ago: sign in again with your alias (not a sign-out to stay out of)
+      // you clicked "log out" in the VTO box a moment ago: sign in again with your alias (not a sign-out to stay out of)
       const resetAt0 = parseInt(getShared('vtoReset') || '0', 10);
       if (resetAt0 && t0 - resetAt0 < 600000 && t0 >= resetAt0) st.kind = 'reset';
       else if (manual) st.kind = 'manual';
@@ -243,7 +243,10 @@
   // 4.63 (Martin, 10/28): all box text off-white (#ece8df, like Transfer Schedule); section names sky blue (#60a5fa).
   // 4.64 (Martin, 10/28): Authentication Session: "session ended (10h 7m)" in pink (was "Amazon signed you out", orange); "Auto (3s)" in teal like launcher opened (was "signed in automatically", cyan).
   // 4.65 (Martin, 10/28): "you clicked log out" and "you signed out inside A to Z" are purple (were orange).
-  const VERSION = '4.65';
+  // 4.66 (Martin, 10/29): log out writes one log line, "you clicked log out" (the page click watcher counted the box button too).
+  //   Old passkey setup leftovers removed: the copy's passkey section (24 h passkey) and reset line, the "reset passkey" wording,
+  //   the [Reset] tag (now [LogOut]). Sign-ins say "Amazon remembered you" or "passkey used". Old saved lines are reworded once.
+  const VERSION = '4.66';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -257,7 +260,7 @@
   const FALLBACK_MS = 8000;        // reload if no good check for this long
   const MAX_DIRECT_HOUR = 240;     // max direct accept RETRIES per hour (first tries on new VTOs never count and are never blocked). 4.51: was 120 (clicking used to take over)
   const PASSKEY_MIN_MS = 4500;   // 4.27: was 8 s - a Touch ID under 8 s was missed (remembered sign-ins take 0-3 s). 4.21: sign-in took more than 8 s after the alias = passkey (remembered takes 2-3 s; was 15 s, a 14 s passkey was missed)
-  const RESET_URL = 'https://atozworkforce.idprism-auth.amazon.com/logout#vtoReset';   // 4.25: Amazon's full sign-out page (seen in your history 10/16)
+  const LOGOUT_URL = 'https://atozworkforce.idprism-auth.amazon.com/logout#vtoReset';   // Amazon's full sign-out page (#vtoReset tells VTO Phone Alerts it was the log out button)
   const ONE_AT_A_TIME_WAIT = 6000;  // accepts go one at a time (Amazon handles one at a time); the next goes the instant the previous gets an answer.
                                    // 4.24: was 2 s. The 2 s "test" accept always got SMS-9999 (busy) and could never win, because Amazon takes
                                    // 1.5-5.6 s to answer an accept. Now the next one waits for the answer, up to 6 s (an accept is given up after 10 s).
@@ -452,9 +455,9 @@
   // sign-in codes: [Auto] the script signed in with your alias (cyan), [Passkey] Amazon asked for your passkey (red),
   //   [Remembered] no sign-in page at all (white)
   // 4.15 colors: cyan [Auto], yellow [Closed], red [401] [Passkey], orange [CutOff] [Network], mint [Remembered]
-  const TAG_COLOR = function (t) { return (t === '401' || t === 'Passkey') ? C_RED : (t === 'Auto' || t === 'Reset') ? C_CYAN : t === 'Closed' ? C_YEL : (t === 'Network' || t === 'CutOff') ? C_WARN : t === 'Remembered' ? C_MINT : C_TAG; };
+  const TAG_COLOR = function (t) { return (t === '401' || t === 'Passkey') ? C_RED : (t === 'Auto' || t === 'LogOut') ? C_CYAN : t === 'Closed' ? C_YEL : (t === 'Network' || t === 'CutOff') ? C_WARN : t === 'Remembered' ? C_MINT : C_TAG; };
   // older names -> the current codes
-  const TAG_NAME = { SignedOut: 'Closed', SelfClosed: 'Closed', Asleep: 'CutOff', ShutDown: 'CutOff', NoInternet: 'Network', Manual: 'Auto', Extended: 'Auto' };
+  const TAG_NAME = { SignedOut: 'Closed', SelfClosed: 'Closed', Asleep: 'CutOff', ShutDown: 'CutOff', NoInternet: 'Network', Manual: 'Auto', Extended: 'Auto', Reset: 'LogOut' };
   const normTag = function (t) { return TAG_NAME[t] || t; };
   // 4.39: the scheduled restarts are gone (the virtual passkey signs you back in), so there is no [Renew] tag any more.
   function outTagFromText(r, h12, min, ampm) {
@@ -763,7 +766,7 @@
     // you clicked Sign out yourself (here, or on the passkey page via VTO Phone Alerts) after the last good check
     const manualAt = parseInt(getShared('vtoManual') || '0', 10);
     const manualNow = !!(hb && manualAt > hb - 60000 && manualAt <= startedAt);
-    // 4.25: you pressed "reset passkey" since the last good check
+    // you clicked "log out" in the VTO box since the last good check
     const resetAt = parseInt(getShared('vtoReset') || '0', 10);
     const resetNow = !!(hb && resetAt > hb - 60000 && resetAt <= startedAt);
     const lw = loginWatch();
@@ -809,11 +812,10 @@
         ls.set('vtoResetResult', { t: resetAt, at: startedAt, ok: pkAny, signIn: signedInHere });
         if (!signedInHere) logAction('!! log out did not sign you out - press it again');   // 4.43: a log out that worked shows in Authentication Session only
       }
-      const reason0 = resetNow ? 'you pressed reset passkey' + (pkAny ? ', the script typed your alias, then Amazon asked for your PASSKEY (you finished it' + (pk2 ? ', ' + Math.round(secondPageMs(lw) / 1000) + 's' : '') + ')'
-          : signedInHere ? ', but Amazon remembered you - no passkey, the reset did not take' : ', but there was no sign-in - the reset did not take')
+      const reason0 = resetNow ? 'you clicked log out' + (signedInHere ? '' : ', but you stayed signed in')
         : manual ? 'you signed out yourself'
         : viaLogin ? 'Amazon signed you out'
-        : extended ? 'Chrome closed' + (pk2 ? ', the script typed your alias, then Amazon asked for your PASSKEY (you finished it, ' + Math.round(secondPageMs(lw) / 1000) + 's)' : ' and the script signed in with your alias')
+        : extended ? 'Chrome closed and the script signed in with your alias' + (pk2 ? ' and the passkey (' + Math.round(secondPageMs(lw) / 1000) + 's)' : '')
         : closed ? 'page was closed'
         : asleep ? 'PC was asleep'
         : noNet ? 'no internet'
@@ -824,16 +826,15 @@
       const inTag = !viaPage ? 'Remembered'
         : ((lw.pk && lw.pk >= lw.since) || (lw.pw && lw.pw >= lw.since) || passkeyOnSecondPage(lw)) ? 'Passkey'
         : 'Auto';
-      if (inTag === 'Passkey' && startedAt > ls.get('vtoPasskeyAt', 0)) ls.set('vtoPasskeyAt', startedAt);   // 4.18
       // 4.14: no guessing from the passkey (a PC restart does not always bring one) - [ShutDown] only when
       // VTO Chrome was still open and was cut off; closing it yourself is always [Closed]
-      const outTag = resetNow ? 'Reset' : manual ? 'Closed' : viaLogin ? '401'
+      const outTag = resetNow ? 'LogOut' : manual ? 'Closed' : viaLogin ? '401'
         : closed ? 'Closed'
         : noNet ? 'Network' : 'CutOff';
       const msg = dayTime(outAt) + ' SIGNED OUT - SIGNED IN ' + (auto ? 'AUTOMATICALLY ' : '') + (sameDay ? hhmmss(startedAt) : dayTime(startedAt)) + ' (' + gapTxt + ') - ' + reason + ' | tags: ' + outTag + '>' + inTag;
       // 4.29: In-N-Out = real sign-outs and sign-ins only. A gap where you stayed signed in (no sign-in page: internet drop, reload,
       // Chrome reopened) or where the Mac slept (lid closed) and the script signed you back in gets one log line instead.
-      // A passkey, Amazon signing you out (401), your own sign-out and reset passkey always get an In-N-Out line.
+      // A passkey, Amazon signing you out (401), your own sign-out and log out always get an In-N-Out line.
       const keepLine = resetNow || manual || outTag === '401' || inTag === 'Passkey' || (viaPage && !asleep);
       if (keepLine) addSignEvent(msg);
       else {
@@ -1653,9 +1654,7 @@
       '--- authentication session (4.40)', ls.get('vtoSessions', []).map(function (e) { return sessLine(e).parts.map(function (p) { return p.t; }).join('').trim(); }).join('\n') || 'none yet',
       '--- signed out', ls.get('vtoSignErrors', []).join('\n'),
       '--- gaps that were not a sign-out (4.29: log only, not In-N-Out)', ls.get('vtoGaps', []).join('\n') || 'none',
-      '--- sign-ins (passkey asked or not)', ls.get('vtoSignIns', []).join('\n'),
-      '--- passkey (last one recorded; a new one is needed about every 24 h)', ((passkeyLine() || {}).t || 'no passkey sign-in recorded yet') +
-        '\ntab title: ' + document.title + ' | reset: ' + JSON.stringify(ls.get('vtoResetResult', null)),
+      '--- sign-ins', ls.get('vtoSignIns', []).join('\n'),
       '--- stay logged in clicks (this login)', (function () { const v = stayGet(); return v ? 'login since ' + new Date(v.since).toLocaleString() + ': ' + v.clicks.filter(function (t) { return t >= v.since; }).map(hhmmss).join(', ') : ''; })(),
       '--- reloads', ls.get('vtoReloads', []).join('\n'),
       '--- log', ls.get('vtoLog', []).join('\n')
@@ -1741,7 +1740,7 @@
     flashEl.style.cssText = 'font-size:11px;';
     btns.appendChild(flashEl);
     // 4.44: "log out" sits in the header (two clicks within 5 s); Critical Alert moved to the line where log out was
-    btns.appendChild(mkBtn('log out', resetPasskey));   // 4.60: white with blue words like the other header buttons
+    btns.appendChild(mkBtn('log out', logOut));   // 4.60: white with blue words like the other header buttons
     // 4.36: "test" asks VTO Phone Alerts to send a test alert to your phone (it holds the Pushover keys). Not near :00.
     btns.appendChild(mkBtn('test', function () {
       if (nearDrop()) { flash('near :00 - try after :01'); return; }
@@ -1773,9 +1772,9 @@
   const C_HEADTXT = '#ece8df';  // 4.60: off-white header text on the blue bar (same as Transfer Schedule)
   const C_PURPLE = '#bd93f9';   // 4.65: purple: you clicked log out / you signed out inside A to Z
   const C_MINT = '#a6f0c6';     // mint: [Remembered]
-  const C_BAD = '#ff92df';      // pink: passkey close/due (signed out + check problems are orange since 4.20, missed is yellow since 4.13)
+  const C_BAD = '#ff92df';      // pink: session ended, launcher closed
   const C_WARN = '#ffa94d';     // orange: warnings
-  const C_CYAN = '#8be9fd';     // cyan: [Auto] [Reset]
+  const C_CYAN = '#8be9fd';     // cyan: [Auto] [LogOut]
   const C_RED = '#ff5555';      // red: [Passkey] (Amazon asked for your passkey)
   const C_TAG = '#ece8df';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
   // log line colors: accepted = green; signed out, delays, errors = orange; missed = pink; everything else white
@@ -1823,62 +1822,20 @@
     return d;
   }
 
-  // 4.17: last passkey time. First run: taken from the newest "PASSKEY ASKED" sign-in line already saved.
-  function seedPasskeyAt() {
-    try {
-      const now = new Date();
-      const mk = function (mo, d, hh, mm, ss, ap) {
-        let h = +hh % 12; if (ap === 'PM') h += 12;
-        const t = new Date(now.getFullYear(), +mo - 1, +d, h, +mm, +ss);
-        if (t > now) t.setFullYear(t.getFullYear() - 1);
-        return t.getTime();
-      };
-      let best = 0;
-      // sign-ins list: "Wed, 10/14, 2:50:23 PM signed in ... PASSKEY ASKED ..."
-      ls.get('vtoSignIns', []).forEach(function (x) {
-        if (!/PASSKEY ASKED|passkey asked \(|password box shown/.test(x)) return;
-        const m = String(x).match(/(\d{1,2})\/(\d{1,2}), (\d{1,2}):(\d{2}):(\d{2}) (AM|PM)/);
-        if (m) best = Math.max(best, mk(m[1], m[2], m[3], m[4], m[5], m[6]));
-      });
-      // In-N-Out lines tagged ">Passkey" (4.18): "Thu, 10/15, 8:40:03 PM SIGNED OUT - SIGNED IN 10:33:25 PM (..."
-      ls.get('vtoSignErrors', []).forEach(function (x) {
-        x = String(x); if (!/>Passkey\s*$/.test(x)) return;
-        const d0 = x.match(/^\w{3}, (\d{1,2})\/(\d{1,2}),/);
-        const m = x.match(/SIGNED IN (?:AUTOMATICALLY )?(?:\w{3}, (\d{1,2})\/(\d{1,2}), )?(\d{1,2}):(\d{2}):(\d{2}) (AM|PM)/);
-        if (!m || !(m[1] || d0)) return;
-        best = Math.max(best, mk(m[1] || d0[1], m[2] || d0[2], m[3], m[4], m[5], m[6]));
-      });
-      if (best > ls.get('vtoPasskeyAt', 0)) ls.set('vtoPasskeyAt', best);
-    } catch (e) {}
-  }
   function dayClock(t) { return new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }); }
-  // 4.32: just the time of the last passkey. The last-chance / "covered until" guessing is removed.
-  function passkeyLine() {
-    try {
-      const pk = ls.get('vtoPasskeyAt', 0); if (!pk) return null;
-      return { t: 'passkey: ' + dayClock(pk) };
-    } catch (e) { return null; }
-  }
-  // 4.32: no more pkdue in the title (the last-chance restart that read it is gone). This only strips any old pkdue left over.
-  function applyPkTitle() {
-    try {
-      const base = String(document.title || '').replace(/\s*·?\s*pkdue=\d+/g, '').trim();
-      if (document.title !== base) document.title = base;
-    } catch (e) {}
-  }
-  // 4.25: "reset passkey" button: full sign-out, then the script signs in with your alias and you touch the fingerprint.
-  // Click twice (the second click within 5 s). Never from :55 to :03, and not while an accept is waiting.
-  function resetPasskey() {
+  // "log out" button: full sign-out, then the script signs you back in with your alias and the virtual passkey.
+  // One click. Not near the 8 AM-2 PM :00 drops, and not while an accept is waiting.
+  function logOut() {
     if (nearDrop()) { flash('near :00 - try after :01'); return; }   // 4.47: only around the 8 AM-2 PM drops
     if (inFlight.size) { flash('accepting - try again in a moment'); return; }
     // 4.47: one click (was two)
     setShared('vtoReset', Date.now());
     ls.set('vtoResetAt', Date.now());
-    logAction('log out: pressed');
+    logAction('you clicked log out');   // 4.66: the only log line for it (the page click watcher skips the box)
     reloading = true;   // not a closed page
-    location.assign(RESET_URL);
+    location.assign(LOGOUT_URL);
   }
-  // 4.25: after a reset that never reached the sign-in page (A to Z kept you signed in), say so
+  // after a log out that never reached the sign-in page (A to Z kept you signed in), say so
   function checkResetNoSignIn() {
     try {
       const at = ls.get('vtoResetAt', 0); if (!at || Date.now() - at > 15 * 60000) return;
@@ -1888,14 +1845,7 @@
       logAction('!! log out did not sign you out - press it again');
     } catch (e) {}
   }
-  function resetLine() {
-    const r = ls.get('vtoResetResult', null);
-    if (!r || Date.now() - r.at > 2 * 3600000) return null;
-    return r.ok ? { t: 'reset passkey: done ' + dayClock(r.at), c: C_MINT }
-      : { t: '!! reset passkey did not take - press it again', c: C_WARN };
-  }
   function render() {
-    applyPkTitle();
     if (!box) buildBox();
     if (!box) return;
     const age = (Date.now() - lastPollOK) / 1000;
@@ -2130,6 +2080,7 @@
     try {
       if (!e.isTrusted) return;
       const b = e.target && e.target.closest && e.target.closest('button, a, [role="button"], [role="menuitem"]');
+      if (b && b.closest('#vto-box')) return;   // 4.66: the box's own log out button logs itself
       const t = b ? String(b.innerText || b.textContent || '').trim() : '';
       if (/^(log ?out|sign ?out|log off)$/i.test(t)) { setShared('vtoManual', Date.now()); logAction('you clicked ' + t); }
     } catch (err) {}
@@ -2155,7 +2106,7 @@
     if (!reloading) ls.set('vtoClosedAt', Date.now());
   });
   window.addEventListener('beforeunload', function () { pageLeaving = true; });
-  // sign-ins (copy only): did Amazon ask for the passkey this time, or did it remember you?
+  // sign-ins (copy only): passkey used, or Amazon remembered you
   function recordSignIn() {
     try {
       const lw = loginWatch(); if (!lw) return;
@@ -2163,22 +2114,49 @@
       // 4.18: the first VTO page after the sign-in page, however long the passkey took (was: within 1 h)
       if (hbStartVal > lw.lastSeen + 5000 || lw.lastSeen > startedAt + 10000) return;
       ls.set('vtoSignInsSeen', lw.since);
-      if (lw.pk || lw.pw || passkeyOnSecondPage(lw)) ls.set('vtoPasskeyAt', startedAt);   // 4.17: start of the next 24 h
-      const how = lw.pk ? 'passkey asked (' + hhmmss(lw.pk) + ')'
+      const how = lw.pk ? 'passkey used (' + hhmmss(lw.pk) + ')'
         : lw.pw ? 'password box shown (' + hhmmss(lw.pw) + ')'
-        : passkeyOnSecondPage(lw) ? 'signed in, looks like a passkey (sign-in took ' + Math.round(secondPageMs(lw) / 1000) + 's)'
-        : 'no passkey (Amazon remembered you, ' + Math.round(secondPageMs(lw) / 1000) + 's' + (sleptOnSecondPage(lw) ? ' - the PC was asleep in between' : '') + ')';
-      const why = { amazon: '401', manual: 'you signed out', closed: 'page closed', reset: 'you pressed log out' }[lw.kind] || lw.kind || '?';
+        : passkeyOnSecondPage(lw) ? 'passkey used (sign-in took ' + Math.round(secondPageMs(lw) / 1000) + 's)'
+        : 'Amazon remembered you (' + Math.round(secondPageMs(lw) / 1000) + 's' + (sleptOnSecondPage(lw) ? ' - the PC was asleep in between' : '') + ')';
+      const why = { amazon: '401', manual: 'you signed out', closed: 'page closed', reset: 'you clicked log out' }[lw.kind] || lw.kind || '?';
       const a = ls.get('vtoSignIns', []);
       const byScript = lw.autoAt && lw.autoAt >= lw.since && !(lw.userAt && lw.userAt >= lw.since) && !passkeyOnSecondPage(lw);
-      a.push(dayTime(startedAt) + ' signed in' + (byScript ? ' AUTOMATICALLY (alias typed ' + hhmmss(lw.autoAt) + ')' : lw.autoAt && lw.autoAt >= lw.since ? ' by you (alias typed by the script ' + hhmmss(lw.autoAt) + ')' : '') + ' - ' + how + ' | sign-in page ' + hhmmss(lw.since) + ' - ' + hhmmss(lw.lastSeen) + ' (' + why + ')' + (lw.offer && !lw.pk ? ' | passkey only suggested' : ''));
+      a.push(dayTime(startedAt) + ' signed in' + (byScript ? ' AUTOMATICALLY (alias typed ' + hhmmss(lw.autoAt) + ')' : lw.autoAt && lw.autoAt >= lw.since ? ' by you (alias typed by the script ' + hhmmss(lw.autoAt) + ')' : '') + ' - ' + how + ' | sign-in page ' + hhmmss(lw.since) + ' - ' + hhmmss(lw.lastSeen) + ' (' + why + ')');
       while (a.length > 100) a.shift();
       ls.set('vtoSignIns', a);
     } catch (e) {}
   }
+  // 4.66: one time, reword lines saved by older versions (old passkey setup) and join the doubled log out lines
+  function migrateOldWording() {
+    try {
+      if (ls.get('vtoWording466', false)) return;
+      const fix = function (x) {
+        return String(x)
+          .replace(/you pressed reset passkey, but Amazon remembered you - no passkey, the reset did not take/g, 'you clicked log out')
+          .replace(/you pressed reset passkey, but there was no sign-in - the reset did not take/g, 'you clicked log out, but you stayed signed in')
+          .replace(/you pressed reset passkey/g, 'you clicked log out')
+          .replace(/\| tags: Reset>/g, '| tags: LogOut>')
+          .replace(/no passkey \(Amazon remembered you, /g, 'Amazon remembered you (')
+          .replace(/signed in, looks like a passkey \(/g, 'passkey used (')
+          .replace(/passkey asked \(/g, 'passkey used (')
+          .replace(/ \| passkey only suggested/g, '')
+          .replace(/\(you pressed log out\)/g, '(you clicked log out)');
+      };
+      ['vtoSignErrors', 'vtoSignIns', 'vtoGaps'].forEach(function (k) { const a = ls.get(k, null); if (Array.isArray(a)) ls.set(k, a.map(fix)); });
+      const log = ls.get('vtoLog', []), out = [];
+      log.forEach(function (x) {
+        x = String(x);
+        const m = x.match(/^(.*?) (?:log out: pressed|you clicked log out)$/);
+        if (m) { const p = out[out.length - 1]; if (p && p === m[1] + ' you clicked log out') return; out.push(m[1] + ' you clicked log out'); return; }
+        out.push(x);
+      });
+      ls.set('vtoLog', out);
+      ls.set('vtoWording466', true);
+    } catch (e) {}
+  }
   function init() {
     setShared('vtoGoVto', '0');   // back on VTO: A to Z's home page works normally again
-    seedPasskeyAt();
+    migrateOldWording();
     setTimeout(recordSignIn, 3000);
     origTitle = document.title;
     startedAt = Date.now();
@@ -2187,7 +2165,7 @@
     netDownAtStart = ls.get('vtoNetDownAt', 0);
     ls.set('vtoHeartbeat', startedAt);   // the shared vtoHb cookie is only written after a real good check
     setTimeout(function () { if (!seedSessions()) sessionAtStart(hbAtStart); fixRefreshPairs(); checkGapAtStart(hbAtStart); }, 2500);   // 4.44: the first run is covered by the history
-    setTimeout(checkResetNoSignIn, 20000);   // 4.25
+    setTimeout(checkResetNoSignIn, 20000);
     buildBox();
     // backup clicking reacts the moment a button appears (like 3.3), not only on the 0.3 s timer.
     // Our own box redraws are ignored. (Direct accept is not affected - it does not use the page.)
