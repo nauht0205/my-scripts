@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.68
+// @version      4.69
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -250,7 +250,9 @@
   // VTO Accepted green), outlined header buttons, white header while watching (orange while accepting / delayed, green when accepted),
   // section names in bold sentence case, VTO events as cards grouped under the VTO's day like the VTO page,
   // Critical Alert and Priority on one line, "auto signed-in (3s)".
-  const VERSION = '4.68';
+  // 4.69 (Martin, 10/30): Dark mode like the dark A to Z page (Mode: button after Priority, saved in vtoTheme, default light);
+  //   softer orange on dark; a missed VTO's card is gray with "VTO Filled" like the VTO page (log and counts stay red).
+  const VERSION = '4.69';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1673,11 +1675,11 @@
   // 4.68: header buttons outlined like the A to Z tiles; a button with its own color (in a line) is a pill
   function mkBtn(label, fn, color, bg) {
     const pill = !!bg;
-    bg = bg || '#ffffff';
+    bg = bg || C_BG;
     const b = document.createElement('button');
     b.textContent = label;
     b.style.cssText = 'background:' + bg + ';color:' + (color || C_BASE) + ';font:600 12px/1.5 ' + FONT + ';cursor:pointer;display:inline-flex;align-items:center;vertical-align:middle;' +
-      (pill ? 'border:0;border-radius:999px;padding:1px 10px;' : 'border:1px solid #cfd0d8;border-radius:6px;padding:2px 9px;');
+      (pill ? 'border:0;border-radius:999px;padding:1px 10px;' : 'border:1px solid ' + C_BTN_LINE + ';border-radius:6px;padding:2px 9px;');
     b.addEventListener('mouseenter', function () { b.style.filter = 'brightness(0.94)'; });
     b.addEventListener('mouseleave', function () { b.style.filter = ''; b.style.transform = ''; });
     b.addEventListener('mousedown', function () { b.style.transform = 'translateY(1px)'; });
@@ -1729,7 +1731,7 @@
     if (box || !document.body) return;
     box = document.createElement('div');
     // 4.26: as wide as its longest fixed line (header, status lines, In-N-Out); long lines wrap; scrolls up and down
-    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:#ffffff;color:' + C_BASE + ';font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C_LINE + ';border-radius:8px;box-shadow:0 2px 12px rgba(22,30,45,.18);user-select:text;-webkit-user-select:text;cursor:auto;';
+    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:' + C_BG + ';color:' + C_BASE + ';font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C_LINE + ';border-radius:8px;box-shadow:0 2px 12px ' + C_SHADOW + ';user-select:text;-webkit-user-select:text;cursor:auto;';
     // 4.30: you can select and copy any box text (Cmd+C); mouse, selection and copy events stay in the box, not the page
     ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'selectstart', 'copy'].forEach(function (n) { box.addEventListener(n, function (e) { e.stopPropagation(); }); });
     box.id = 'vto-box';
@@ -1737,7 +1739,7 @@
     selCss.textContent = '#vto-box, #vto-box * { -webkit-user-select: text !important; user-select: text !important; }';
     box.appendChild(selCss);
     const head = document.createElement('div');
-    head.style.cssText = 'position:sticky;top:0;padding:8px 10px 8px 14px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;white-space:pre;background:#ffffff;border-bottom:1px solid ' + C_LINE + ';';
+    head.style.cssText = 'position:sticky;top:0;padding:8px 10px 8px 14px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;white-space:pre;background:' + C_BG + ';border-bottom:1px solid ' + C_LINE + ';';
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:5px;align-items:center;';
@@ -1770,22 +1772,50 @@
   // text colors: Dracula's bright set (from Martin's picture); background: the darker purple Martin preferred
   // 4.68: A to Z colors (taken from the A to Z pages): white box, navy text, gray labels, A to Z orange, VTO Accepted green
   const FONT = '"Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif';   // 4.68: A to Z's own font (the page loads it)
-  const C_ACCEPT = '#009d34';   // green: accepted (A to Z "VTO Accepted")
-  const C_ACCEPT_BG = '#d5f8de';
-  const C_BASE = '#161e2d';     // navy: normal box text
-  const C_TIME = '#5c6471';     // gray: times and labels
-  const C_LINE = '#d1d1d9';     // gray: borders and dividers
-  const C_YEL = '#8a6d00';      // dark yellow: [Closed] (copy only)
-  const C_SECT = '#161e2d';     // section names: bold navy, sentence case
-  const C_MISS = '#cc0c39';     // red: missed / full / session ended / launcher closed
-  const C_MISS_BG = '#fdecef';
-  const C_PURPLE = '#ef6c28';   // 4.68: orange (was purple): you clicked log out / you signed out inside A to Z
-  const C_MINT = '#1d5bd8';     // 4.68: blue: launcher opened / auto signed-in
-  const C_BAD = '#cc0c39';      // red: session ended, launcher closed
-  const C_WARN = '#ef6c28';     // A to Z orange: errors, warnings, Watching
-  const C_CYAN = '#1d5bd8';     // blue: you signed in
-  const C_RED = '#cc0c39';      // red: [Passkey] (Amazon asked for your passkey)
-  const C_TAG = '#161e2d';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
+  let C_ACCEPT = '#009d34';   // green: accepted (A to Z "VTO Accepted")
+  let C_ACCEPT_BG = '#d5f8de';
+  let C_BASE = '#161e2d';     // navy: normal box text
+  let C_TIME = '#5c6471';     // gray: times and labels
+  let C_LINE = '#d1d1d9';     // gray: borders and dividers
+  let C_YEL = '#8a6d00';      // dark yellow: [Closed] (copy only)
+  let C_SECT = '#161e2d';     // section names: bold navy, sentence case
+  let C_MISS = '#cc0c39';     // red: missed / full / session ended / launcher closed
+  let C_MISS_BG = '#fdecef';
+  let C_PURPLE = '#ef6c28';   // 4.68: orange (was purple): you clicked log out / you signed out inside A to Z
+  let C_MINT = '#1d5bd8';     // 4.68: blue: launcher opened / auto signed-in
+  let C_BAD = '#cc0c39';      // red: session ended, launcher closed
+  let C_WARN = '#ef6c28';     // A to Z orange: errors, warnings, Watching
+  let C_CYAN = '#1d5bd8';     // blue: you signed in
+  let C_RED = '#cc0c39';      // red: [Passkey] (Amazon asked for your passkey)
+  let C_TAG = '#161e2d';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
+  // 4.69: box colors for each mode (light = 4.68 A to Z look, dark = the dark A to Z page). applyTheme() sets the C_ colors.
+  let C_BG, C_SHADOW, C_BTN_LINE, C_OK_LINE, C_FILL_BG, C_FILL_LINE, C_FILL_TXT, C_BAR_OK, C_ON_WARN, C_ALERT_ON;
+  const THEMES = {
+    light: { ACCEPT: '#009d34', ACCEPT_BG: '#d5f8de', BASE: '#161e2d', TIME: '#5c6471', LINE: '#d1d1d9', YEL: '#8a6d00', SECT: '#161e2d',
+      MISS: '#cc0c39', MISS_BG: '#fdecef', PURPLE: '#ef6c28', MINT: '#1d5bd8', BAD: '#cc0c39', WARN: '#ef6c28', CYAN: '#1d5bd8', RED: '#cc0c39', TAG: '#161e2d',
+      BG: '#ffffff', SHADOW: 'rgba(22,30,45,.18)', BTN_LINE: '#cfd0d8', OK_LINE: '#2fbf5b', FILL_BG: '#e2e5e9', FILL_LINE: '#b6bac2', FILL_TXT: '#3f4653',
+      BAR_OK: '#009d34', ON_WARN: '#ffffff', ALERT_ON: '#00762a' },
+    dark: { ACCEPT: '#4cc86a', ACCEPT_BG: '#023a17', BASE: '#ffffff', TIME: '#a3a3ae', LINE: '#3a3a45', YEL: '#e0b400', SECT: '#ffffff',
+      MISS: '#ff5c77', MISS_BG: '#3d0b17', PURPLE: '#ff9f5a', MINT: '#6aa5ff', BAD: '#ff5c77', WARN: '#ff9f5a', CYAN: '#6aa5ff', RED: '#ff5c77', TAG: '#ffffff',
+      BG: '#15151d', SHADOW: 'rgba(0,0,0,.5)', BTN_LINE: '#5a5a66', OK_LINE: '#4cc86a', FILL_BG: '#2e2f38', FILL_LINE: '#565763', FILL_TXT: '#d0d1d8',
+      BAR_OK: '#0b8a35', ON_WARN: '#15151d', ALERT_ON: '#4cc86a' }
+  };
+  function darkMode() { return ls.get('vtoTheme', 'light') === 'dark'; }
+  function applyTheme() {
+    const T = THEMES[darkMode() ? 'dark' : 'light'];
+    C_ACCEPT = T.ACCEPT; C_ACCEPT_BG = T.ACCEPT_BG; C_BASE = T.BASE; C_TIME = T.TIME; C_LINE = T.LINE; C_YEL = T.YEL; C_SECT = T.SECT;
+    C_MISS = T.MISS; C_MISS_BG = T.MISS_BG; C_PURPLE = T.PURPLE; C_MINT = T.MINT; C_BAD = T.BAD; C_WARN = T.WARN; C_CYAN = T.CYAN; C_RED = T.RED; C_TAG = T.TAG;
+    C_BG = T.BG; C_SHADOW = T.SHADOW; C_BTN_LINE = T.BTN_LINE; C_OK_LINE = T.OK_LINE; C_FILL_BG = T.FILL_BG; C_FILL_LINE = T.FILL_LINE; C_FILL_TXT = T.FILL_TXT;
+    C_BAR_OK = T.BAR_OK; C_ON_WARN = T.ON_WARN; C_ALERT_ON = T.ALERT_ON;
+  }
+  applyTheme();
+  function toggleTheme() {
+    ls.set('vtoTheme', darkMode() ? 'light' : 'dark');
+    applyTheme();
+    if (box) { box.remove(); box = null; }   // rebuilt in the new colors on the next render
+    boxKey = ''; liveEl = null;
+    render();
+  }
   // log line colors: accepted = green; signed out, delays, errors = orange; missed = pink; everything else white
   function lineColor(t) {
     if (t.indexOf('SIGNED OUT') > -1 || t.indexOf('not logged in') > -1) return C_WARN;   // 4.20: orange
@@ -1837,15 +1867,28 @@
   }
   function vtoCard(c) {
     const d = document.createElement('div');
-    d.style.cssText = 'box-sizing:border-box;width:0;min-width:100%;border:1px solid ' + (c.ok ? '#2fbf5b' : '#f0a3b3') + ';background:' + (c.ok ? C_ACCEPT_BG : C_MISS_BG) + ';border-radius:6px;padding:4px 10px;margin:4px 0;white-space:normal;';
+    d.style.cssText = 'box-sizing:border-box;width:0;min-width:100%;border:1px solid ' + (c.ok ? C_OK_LINE : C_FILL_LINE) + ';background:' + (c.ok ? C_ACCEPT_BG : C_FILL_BG) + ';border-radius:6px;padding:4px 10px;margin:4px 0;white-space:normal;';
     const l1 = document.createElement('div');
     const t = document.createElement('b'); t.textContent = c.time; l1.appendChild(t);
     if (c.len) { const n = document.createElement('span'); n.textContent = ' (' + c.len + ')'; n.style.color = C_TIME; l1.appendChild(n); }
     const l2 = document.createElement('div');
-    const ic = document.createElement('span');
-    ic.textContent = c.ok ? '✓' : '✕';
-    ic.style.cssText = 'display:inline-block;width:14px;height:14px;border-radius:50%;background:' + (c.ok ? C_ACCEPT : C_MISS) + ';color:#fff;font-size:10px;line-height:14px;text-align:center;margin-right:5px;vertical-align:-1px;';
-    const st = document.createElement('span'); st.textContent = c.ok ? 'VTO Accepted' : 'Missed'; st.style.cssText = 'font-weight:600;color:' + (c.ok ? C_ACCEPT : C_MISS) + ';';
+    let ic;
+    if (c.ok) {
+      ic = document.createElement('span');
+      ic.textContent = '✓';
+      ic.style.cssText = 'display:inline-block;width:14px;height:14px;border-radius:50%;background:' + C_ACCEPT + ';color:' + C_BG + ';font-size:10px;font-weight:700;line-height:14px;text-align:center;margin-right:5px;vertical-align:-1px;';
+    } else {   // 4.69: missed = gray "VTO Filled" card with a no-entry sign, like the VTO page
+      ic = document.createElement('span');
+      ic.style.cssText = 'display:inline-block;margin-right:5px;vertical-align:-2px;color:' + C_FILL_TXT + ';';
+      try {
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '14'); svg.setAttribute('height', '14');
+        svg.innerHTML = '<circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.8"/><line x1="3.4" y1="12.6" x2="12.6" y2="3.4" stroke="currentColor" stroke-width="1.8"/>';
+        ic.appendChild(svg);
+      } catch (e) { ic.textContent = '⊘'; }
+    }
+    const st = document.createElement('span'); st.textContent = c.ok ? 'VTO Accepted' : 'VTO Filled'; st.style.cssText = 'font-weight:600;color:' + (c.ok ? C_ACCEPT : C_FILL_TXT) + ';';
     const w = document.createElement('span'); w.textContent = ' ' + c.when; w.style.color = C_TIME;
     l2.appendChild(ic); l2.appendChild(st); l2.appendChild(w);
     d.appendChild(l1); d.appendChild(l2);
@@ -1874,7 +1917,7 @@
     d.style.cssText = fix ? 'white-space:pre;tab-size:4;'
       : 'white-space:pre-wrap;word-break:break-word;tab-size:4;width:0;min-width:100%;' + (indent ? 'padding-left:2ch;box-sizing:border-box;' : '');
     parts.forEach(function (p) {
-      if (p.btn) { const b = mkBtn(p.btn, p.fn, p.c, p.bg); b.style.marginLeft = p.first ? '0' : '8px'; d.appendChild(b); return; }   // 4.26: a button inside a line
+      if (p.btn) { const b = mkBtn(p.btn, p.fn, p.c, p.bg); b.style.marginLeft = p.first ? '0' : '8px'; if (p.border) { b.style.border = '1px solid ' + p.border; b.style.padding = '0 9px'; } d.appendChild(b); return; }   // 4.26: a button inside a line
       const sp = document.createElement('span');
       sp.textContent = p.t;
       if (p.c) sp.style.color = p.c;
@@ -1918,16 +1961,16 @@
     // 4.58: no orange SIGNED OUT bar (the virtual passkey signs you back in within seconds)
     // 4.68: white header with an orange "Watching"; a full orange bar while accepting or when something is wrong, green when accepted
     if (inFlight.size) { status = 'ACCEPTING...'; bg = C_WARN; }
-    else if (last && last.kind === 'ok' && Date.now() - last.t < 30000) { status = 'VTO ACCEPTED'; bg = C_ACCEPT; }
+    else if (last && last.kind === 'ok' && Date.now() - last.t < 30000) { status = 'VTO ACCEPTED'; bg = C_BAR_OK; }
     else if (!template) { status = 'WAITING FOR LIST REQUEST'; bg = C_WARN; }
     else if (age > 8 && !signedOutFlag) { status = 'CHECKS DELAYED'; bg = C_WARN; }
     else if (document.visibilityState === 'hidden') { status = timerMode === 'worker' ? 'Watching (tab hidden - worker on)' : 'WATCHING (TAB HIDDEN - MAY SLOW)'; bg = timerMode === 'worker' ? '' : C_WARN; }
     else { status = 'Watching'; bg = ''; }
 
-    box.__head.style.background = bg || '#ffffff';
+    box.__head.style.background = bg || C_BG;
     box.__head.style.borderBottomColor = bg || C_LINE;
-    box.__head.style.color = bg ? '#ffffff' : C_BASE;
-    const headTxt = 'VTO ' + VERSION + ' | ' + status;
+    box.__head.style.color = !bg ? C_BASE : bg === C_WARN ? C_ON_WARN : '#ffffff';
+    const headTxt = 'VTO ' + VERSION + ' | ' + status + (darkMode() ? ' d' : '');
     if (headLabel.__t !== headTxt) {
       headLabel.__t = headTxt;
       headLabel.textContent = '';
@@ -2002,8 +2045,9 @@
     const muted = ls.get('vtoAlarmMuted', false);
     const night = nightFirst();
     // 4.68: one line; pills: On green, Off red, Night Shift dark blue, Normal yellow
-    return [{ fix: true, parts: [{ t: 'Critical Alert: ', c: C_TIME }, { btn: muted ? 'Off' : 'On', fn: toggleAlarm, c: muted ? C_MISS : '#00762a', bg: muted ? C_MISS_BG : C_ACCEPT_BG, first: true },
-      { t: '   Priority: ', c: C_TIME }, { btn: night ? 'Night Shift' : 'Normal', fn: togglePriority, c: night ? '#ffffff' : C_BASE, bg: night ? '#1d3f8f' : '#ffcc00', first: true }] }];
+    return [{ fix: true, parts: [{ t: 'Critical Alert: ', c: C_TIME }, { btn: muted ? 'Off' : 'On', fn: toggleAlarm, c: muted ? C_MISS : C_ALERT_ON, bg: muted ? C_MISS_BG : C_ACCEPT_BG, first: true },
+      { t: '   Priority: ', c: C_TIME }, { btn: night ? 'Night Shift' : 'Normal', fn: togglePriority, c: night ? '#ffffff' : '#161e2d', bg: night ? '#1d3f8f' : '#ffcc00', first: true },
+      { t: '   Mode: ', c: C_TIME }, { btn: darkMode() ? '☾ Dark' : '☀ Light', fn: toggleTheme, c: C_BASE, bg: darkMode() ? '#2c2c38' : C_BG, border: C_BTN_LINE, first: true }] }];   // 4.69
   }
   function togglePriority() {
     const night = !nightFirst();
