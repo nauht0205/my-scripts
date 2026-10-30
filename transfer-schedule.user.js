@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.16
+// @version      6.17
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
-// @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
+// @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
 // @match        https://atoz.amazon.work/*
 // @match        https://atoz-apps.amazon.work/*
 // @grant        GM_xmlhttpRequest
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.16';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.17';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -575,7 +575,7 @@
         }));
         return out.join('\n') || 'none (or no check yet since updating)';
       })(),
-      '--- card order check on the transfer page (6.16)',
+      '--- card tags on the transfer page (6.17)',
       JSON.stringify(loadJSON('twCardCheck', null)),
       '--- log',
       loadJSON('twLog', []).join('\n') || 'empty',
@@ -837,6 +837,56 @@
   // Only on /transfers pages (never the VTO page). Reads each schedule card's text (time, work days, hours,
   // full/part/flex, OT day), runs the same rules as the alerts, and marks the card. Sends nothing to Amazon.
   const ON_TRANSFERS = /^\/(m\/)?transfers/.test(location.pathname);
+
+  // 6.17: the transfer page's own schedule list, in the order the page shows its cards (it loads more as you scroll).
+  // Read only: the page's request goes out and comes back untouched; the script reads a copy of the answer.
+  // Only on the transfer page, and only for the ListPersonalizedJobs answer, so the VTO page is never touched.
+  const pageList = { loc: '', jobs: [], at: 0, partial: false };
+  let markSoon = null;
+  function notePageJobs(reqBody, text) {
+    try {
+      let b = JSON.parse(reqBody), d = JSON.parse(text);
+      if (!Array.isArray(b)) { b = [b]; d = [d]; }
+      b.forEach((q, n) => {
+        if (!q || q.operationName !== 'ListPersonalizedJobs') return;
+        const r = d[n] && d[n].data && d[n].data.ListPersonalizedJobs;
+        if (!r || !Array.isArray(r.jobs)) return;
+        const v = q.variables || {};
+        const first = !(v.pagination && v.pagination.nextToken);
+        // a later batch with no first batch caught (script started after the page loaded it): the list is incomplete
+        if (first || pageList.loc !== v.locationId) { pageList.partial = !first; pageList.loc = v.locationId || ''; pageList.jobs = []; }
+        r.jobs.forEach(j => { try { pageList.jobs.push({ id: j.id, i: info(j) }); } catch (e) {} });
+        pageList.at = Date.now();
+      });
+      if (markSoon) markSoon();
+    } catch (e) {}
+  }
+  if (ON_TRANSFERS && IS_TOP) {
+    try {
+      const origFetch = W.fetch;
+      W.fetch = function (input, init) {
+        const p = origFetch.apply(this, arguments);
+        try {
+          const body = init && init.body;
+          if (typeof body === 'string' && body.indexOf('ListPersonalizedJobs') > -1)
+            p.then(res => res.clone().text()).then(t => notePageJobs(body, t)).catch(() => {});
+        } catch (e) {}
+        return p;
+      };
+    } catch (e) {}
+    try {
+      const XP = W.XMLHttpRequest.prototype, origSend = XP.send;
+      XP.send = function (body) {
+        try {
+          if (typeof body === 'string' && body.indexOf('ListPersonalizedJobs') > -1) {
+            const x = this;
+            x.addEventListener('load', () => { try { notePageJobs(body, x.responseText); } catch (e) {} });
+          }
+        } catch (e) {}
+        return origSend.apply(this, arguments);
+      };
+    } catch (e) {}
+  }
   const DAY3 = { Sun: 'SUNDAY', Mon: 'MONDAY', Tue: 'TUESDAY', Wed: 'WEDNESDAY', Thu: 'THURSDAY', Fri: 'FRIDAY', Sat: 'SATURDAY' };
   const TIME_RE = /(\d{1,2}):(\d{2})\s*([AP])M\s*[-\u2013]\s*(\d{1,2}):(\d{2})\s*([AP])M/i;
   const to24 = (h, m, ap) => String((+h % 12) + (/p/i.test(ap) ? 12 : 0)).padStart(2, '0') + ':' + m;
@@ -896,53 +946,60 @@
   }
 
   let hlPill = null, hlTargets = [], hlIndex = 0;
-  // 6.15: find this card's schedule in the last check's saved list (by its code on the card, or else the one
-  // schedule with the same type, days and times) to show Inbound / Outbound and the department. Sends nothing.
-  // 6.16: cards don't show the schedule code, and SAH2 often posts the same shift as -OB, -IB and -GC, which look
-  // identical. Those are told apart by order: the 1st of the identical cards on the page = the 1st of those schedules
-  // in the order Amazon sent them, and so on. Used only when the page passes a check: the same number of cards as
-  // schedules for each look, and every card's schedule in Amazon's order down the page. Otherwise: blank, no guess.
+  // 6.15: find this card's schedule (by its code on the card, or the one schedule with the same type, days and times)
+  // to show Inbound / Outbound and the department. Sends nothing.
+  // 6.17: cards don't show the code, and SAH2 often posts the same shift as -OB, -IB and -GC, which look identical.
+  // Those are told apart by walking down the page alongside the page's own list (pageList, same order as its cards).
+  // If that list wasn't caught (script started after the page loaded it), the last check's list in Amazon's order is
+  // used instead, but only while every card lines up with it with nothing skipped. A card that got its tag keeps it,
+  // so cards loading as you scroll don't make tags flicker. When it can't be told: blank, no guess.
   const lookKey = (type, days, st, en) => type + '|' + days + '|' + st + '|' + en;
+  const jobKey = x => lookKey(x.i.type, x.i.days.split('/').map(d => d.toUpperCase()).sort().join(), x.i.start, x.i.end);
+  const cardKey = job => {
+    const m = job.scheduleMetadata[0], w = m.normalWorkingDays[0] || {};
+    const type = /^FLEX/.test(m.type) ? 'Flex' : m.type === 'PART_TIME' ? 'Part-time' : m.type === 'FULL_TIME' ? 'Full-time' : '';
+    return lookKey(type, m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join(), w.startTime, w.endTime);
+  };
+  const kindOf = i => i.dir + '|' + (i.deptName || i.bl) + codeEnd(i.code);
+  const cardTag = new WeakMap();   // card -> { text, i, src }: the tag it got, kept while the card's text stays the same
+  let lastCheckNote = '';
   function cardPlan(entries) {   // entries: [{ card, text, job }] in page order
     const all = loadJSON('siteJobs', {});
     const site = SITES.find(x => location.search.includes(x.id));
-    const list = (site ? (all[site.name] || []) : [].concat(...Object.values(all))).filter(x => x.i);
-    const jobKey = x => lookKey(x.i.type, x.i.days.split('/').map(d => d.toUpperCase()).sort().join(), x.i.start, x.i.end);
-    const cardKey = job => {
-      const m = job.scheduleMetadata[0], w = m.normalWorkingDays[0] || {};
-      const type = /^FLEX/.test(m.type) ? 'Flex' : m.type === 'PART_TIME' ? 'Part-time' : m.type === 'FULL_TIME' ? 'Full-time' : '';
-      return lookKey(type, m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join(), w.startTime, w.endTime);
-    };
-    const jobsByKey = {}, cardsByKey = {};
-    list.slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)).forEach(x => (jobsByKey[jobKey(x)] = jobsByKey[jobKey(x)] || []).push(x));
-    const plan = new Map(), byOrder = new Map();
+    const saved = (site ? (all[site.name] || []) : [].concat(...Object.values(all))).filter(x => x.i);
+    const locId = (location.search.match(/locationId=([^&]+)/) || [])[1] || '';
+    const fromPage = pageList.jobs.length > 0 && !pageList.partial && (!locId || decodeURIComponent(locId) === pageList.loc);
+    const seq = fromPage ? pageList.jobs : (saved.every(x => x.ord) ? saved.slice().sort((a, b) => a.ord - b.ord) : []);
+    const src = fromPage ? 'page' : seq.length ? 'check' : 'none';
+    const pool = fromPage ? pageList.jobs : saved;
+    const byKey = {};
+    pool.forEach(x => (byKey[jobKey(x)] = byKey[jobKey(x)] || []).push(x));
+    const plan = new Map();
+    let p = 0, lined = true, sameKind = 0, byOrder = 0, blank = 0, kept = 0, skipped = 0;
     entries.forEach(e => {
-      const coded = list.filter(x => x.i.code && e.text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length)[0];
-      if (coded) { plan.set(e.card, coded.i); return; }
-      const k = cardKey(e.job);
-      (cardsByKey[k] = cardsByKey[k] || []).push(e.card);
+      const coded = pool.filter(x => x.i.code && x.i.code !== '?' && e.text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length)[0];
+      const k = cardKey(e.job), js = byKey[k] || [];
+      // walk down the list alongside the cards
+      let found = null;
+      if (lined && seq.length) {
+        let q = p;
+        while (q < seq.length && jobKey(seq[q]) !== k) q++;
+        if (q < seq.length && (src === 'page' || q === p)) { skipped += q - p; found = seq[q]; p = q + 1; }
+        else lined = false;   // the page and the list part ways here: stop using order from here down
+      }
+      let i = null, how = '';
+      if (coded) { i = coded.i; how = 'code'; }
+      else if (js.length && new Set(js.map(x => kindOf(x.i))).size === 1) { i = js[0].i; how = 'same'; sameKind++; }
+      else if (found) { i = found.i; how = 'order'; byOrder++; }
+      const old = cardTag.get(e.card);
+      if (old && old.text === e.text && !(old.src === 'check' && how === 'order' && src === 'page')) { if (old.i) { plan.set(e.card, old.i); kept++; } return; }
+      if (i) { plan.set(e.card, i); cardTag.set(e.card, { text: e.text, i, src: how === 'order' ? src : 'sure' }); }
+      else if (js.length > 1) blank++;
     });
-    let same = 0, mismatch = 0, ordered = 0;
-    Object.keys(cardsByKey).forEach(k => {
-      const cs = cardsByKey[k], js = jobsByKey[k] || [];
-      const kinds = new Set(js.map(x => x.i.dir + '|' + (x.i.deptName || x.i.bl) + codeEnd(x.i.code)));
-      if (js.length && kinds.size === 1) { cs.forEach(c => plan.set(c, js[0].i)); return; }   // all alike: no order needed
-      if (cs.length !== js.length || !js.every(x => x.ord)) { mismatch++; return; }
-      same++;
-      cs.forEach((c, n) => byOrder.set(c, js[n]));
-    });
-    // order check: every card placed by order (and every card with a one-of-a-kind look) must follow Amazon's order down the page
-    let last = 0, ok = true;
-    entries.forEach(e => {
-      let x = byOrder.get(e.card);
-      if (!x) { const k = cardKey(e.job), js = jobsByKey[k] || []; if (js.length === 1 && (cardsByKey[k] || []).length === 1) x = js[0]; }
-      if (!x || !x.ord) return;
-      if (x.ord < last) ok = false;
-      last = x.ord; ordered++;
-    });
-    if (ok) byOrder.forEach((x, c) => plan.set(c, x.i));
-    saveJSON('twCardCheck', { at: Date.now(), page: location.search, cards: entries.length, schedules: list.length,
-      lookalikeGroups: same, countMismatch: mismatch, checkedInOrder: ordered, orderOk: ok });
+    const note = { page: location.search, source: src, pageListed: pageList.jobs.length + (pageList.partial ? ' (first batch missed)' : ''), checkListed: saved.length, cards: entries.length,
+      sameKind, byOrder, lookalikeBlank: blank, keptTags: kept, skipped, linedUpToEnd: lined };
+    const sNote = JSON.stringify(note);
+    if (sNote !== lastCheckNote) { lastCheckNote = sNote; saveJSON('twCardCheck', Object.assign({ at: Date.now() }, note)); }   // saved only when it changes
     return plan;
   }
   // 6.15: the green frame goes on the card's own outer box (the bordered tile A to Z draws), not the inner part
@@ -965,18 +1022,20 @@
     } catch (e) {}
     return THEMES[dark ? 'dark' : 'light'];
   }
+  function cardText(card) {
+    const t = card.innerText || '', b = card.querySelector(':scope > .tw-badge');
+    return (b ? t.replace(b.innerText || '', '') : t).replace(/\n{2,}/g, '\n').trim();
+  }
   function markCards() {
     const cards = findCards();
     const P = pageColors();
     hlTargets = [];
-    const entries = cards.map(card => ({ card, text: card.innerText || '' })).map(e => Object.assign(e, { r: cardToJob(e.text) })).filter(e => e.r.ok).map(e => Object.assign(e, { job: e.r.job }));
+    // 6.17: read each card's own text without our note on it (the note used to change what the card looked like)
+    const entries = cards.map(card => ({ card, text: cardText(card) })).map(e => Object.assign(e, { r: cardToJob(e.text) })).filter(e => e.r.ok).map(e => Object.assign(e, { job: e.r.job }));
     const plan = cardPlan(entries);
-    cards.forEach(card => {
-      const text = card.innerText || '';
+    entries.forEach(({ card, text, r }) => {
       const pi = plan.get(card);
       const sig = text.length + ':' + text.slice(0, 80) + ':' + (pi ? pi.code : '');
-      const r = cardToJob(text);
-      if (!r.ok) return;
       const ev = evaluate(r.job);
       if (ev.match) hlTargets.push(card);
       if (card.getAttribute('data-tw') === sig) return;     // already marked, unchanged
@@ -1033,12 +1092,16 @@
     if (!ON_TRANSFERS || !IS_TOP) return;
     let pending = false;
     const run = () => { pending = false; try { markCards(); } catch (e) {} };
+    const ours = n => n.nodeType === 1 && n.classList.contains('tw-badge');
     new MutationObserver(recs => {
       if (pending) return;
       if (recs.every(r => (box && box.contains(r.target)) || (hlPill && hlPill.contains(r.target)) ||
-        (r.target.classList && r.target.classList.contains('tw-badge')))) return;
+        (r.target.classList && r.target.classList.contains('tw-badge')) || (r.target.closest && r.target.closest('.tw-badge')) ||
+        // 6.17: our own note going on or off a card is not a page change (that loop made scrolling laggy)
+        ([...r.addedNodes, ...r.removedNodes].length && [...r.addedNodes, ...r.removedNodes].every(ours)))) return;
       pending = true; setTimeout(run, 400);
     }).observe(document.body, { childList: true, subtree: true });
+    markSoon = () => { if (!pending) { pending = true; setTimeout(run, 200); } };
     run();
   }
 
