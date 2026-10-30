@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.12
+// @version      6.13
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.12';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.13';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -304,13 +304,19 @@
   // Pieces of one schedule, each tagged with what it is (the box colors them by tag; the phone alert joins
   // the text). Department name and break times are left out on purpose: the activity covers the first,
   // and the second isn't needed.
+  function codeEnd(code) {
+    const m = String(code || '').match(/-([A-Za-z]+)$/);
+    if (!m || /^fixed$/i.test(m[1])) return '';
+    return ' · ' + (m[1].length > 2 ? cap(m[1].toUpperCase()) : m[1].toUpperCase());
+  }
   function headParts(i) {
     return [
       { k: i.flex ? 'flex' : /^Part/.test(i.type) ? 'part' : /^Full/.test(i.type) ? 'full' : 'text', t: i.type },
       i.shift ? { k: 'text', t: i.shift, join: ' ' } : null,
       i.dir ? { k: i.dir === 'Outbound' ? 'out' : i.dir === 'Inbound' ? 'in' : 'text', t: i.dir } : null,
       // 6.12: no Outbound / Inbound anywhere: show the department so you can judge it yourself
-      !i.dir && (i.deptName || i.bl) ? { k: 'extra', t: 'dept: ' + (i.deptName || i.bl) } : null,
+      // 6.13: plus the code ending, e.g. "GSF · Sort", "GSF · GC" (endings with numbers and -FIXED left out)
+      !i.dir && (i.deptName || i.bl) ? { k: 'deptOther', t: (i.deptName || i.bl) + codeEnd(i.code) } : null,
       i.activity ? { k: 'act', t: i.activity } : null,
     ].filter(Boolean);
   }
@@ -381,10 +387,10 @@
   const THEMES = {
     light: { bg: '#ffffff', border: '#d1d1d9', btnLine: '#cfd0d8', shadow: 'rgba(22,30,45,.18)', text: '#161e2d', onWarn: '#ffffff',
       green: '#009d34', red: '#cc0c39', blue: '#1d5bd8', pink: '#c2187a', cyan: '#0a7f99', yellow: '#8a6d00', orange: '#c75a12',
-      purple: '#7a3fd1', gray: '#5c6471', azOrange: '#ef6c28' },
+      purple: '#7a3fd1', gray: '#5c6471', azOrange: '#ef6c28', deptBlue: '#1e40af' },
     dark: { bg: '#15151d', border: '#3a3a45', btnLine: '#5a5a66', shadow: 'rgba(0,0,0,.5)', text: '#ffffff', onWarn: '#15151d',
       green: '#50fa7b', red: '#ff5555', blue: '#4d9fff', pink: '#ff92df', cyan: '#8be9fd', yellow: '#f6ff9c', orange: '#ffa94d',
-      purple: '#bd93f9', gray: '#a3a3ae', azOrange: '#ff9f5a' },
+      purple: '#bd93f9', gray: '#a3a3ae', azOrange: '#ff9f5a', deptBlue: '#7aa2ff' },
   };
   const C = {}, PART_COLOR = {};
   let themeNow = '';
@@ -399,6 +405,7 @@
       act: C.yellow,                                 // shift activity
       main: C.text, extra: C.gray,                   // days + times (bold) / shift length, hours per week
       spotsOpen: C.green, text: C.text,
+      deptOther: C.deptBlue,                         // 6.13: department when it is not Outbound / Inbound (blue, not the part-time color)
     });
   }
   applyTheme();
