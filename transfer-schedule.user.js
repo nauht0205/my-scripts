@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.20
+// @version      6.21
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.20';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.21';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -1122,7 +1122,11 @@
         const old = host.querySelector(':scope > .tw-badge'); if (old) { old.twOurs = true; old.remove(); }
         const badge = document.createElement('div');
         badge.className = 'tw-badge';
-        badge.style.cssText = 'position:absolute;top:14px;right:18px;max-width:60%;text-align:right;pointer-events:none;z-index:1;font:700 13px/1.35 ' + FONT + ';';
+        // 6.21: on your own applications ("Pending application", First / Second Choice) the top right holds A to Z's
+        // close button, so the note goes to the bottom right there
+        const isApp = /Pending application|(First|Second|Third) Choice/i.test(host.textContent || '') ||
+          !Array.from(card.querySelectorAll('button, [role="button"], a')).some(x => /^\s*Apply\s*$/i.test(x.textContent || ''));
+        badge.style.cssText = 'position:absolute;' + (isApp ? 'bottom:14px;' : 'top:14px;') + 'right:18px;max-width:60%;text-align:right;pointer-events:none;z-index:1;font:700 13px/1.35 ' + FONT + ';';
         if (ev.match) {
           host.style.outline = '2px solid ' + P.green; host.style.outlineOffset = '-1px';
           badge.style.color = P.green;
