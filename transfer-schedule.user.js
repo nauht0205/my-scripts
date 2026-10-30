@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.9
+// @version      6.10
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.9';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.10';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -392,12 +392,20 @@
   }
   applyTheme();
   const STAR = '★';   // match mark in the box (green)
-  // 6.9: A to Z's own font: whatever the page itself uses (read from the page), Amazon Ember if that can't be read
-  const FONT = (() => { try { const f = getComputedStyle(document.body || document.documentElement).fontFamily; if (f && !/^\s*(serif|"?Times)/i.test(f)) return f; } catch (e) {} return '"Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif'; })();
-  let box = null, headLabel = null, bodyEl = null, lastHtml = '', lastHead = '';
+  // 6.10: Amazon Ember, the A to Z app font, like the VTO box (the A to Z page loads it, so asking by name is enough)
+  const FONT = '"Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif';
+  let box = null, headLabel = null, bodyEl = null, flashEl = null, lastHtml = '', lastHead = '';
   let collapsed = !!GM_getValue('boxCollapsed', false);
 
-  function setStatus(kind, text) { saveJSON('status2', { kind, text, t: Date.now() }); render(); }
+  function setStatus(kind, text) { saveJSON('status2', { kind, text, t: Date.now() }); if (kind === 'ok' && text) flash(text); render(); }
+  // 6.10: short notes (copied, test sent, already checking...) float just under the header, like the VTO box,
+  // so the box never grows for a moment. Problems still stay in the box under Checks.
+  function flash(msg) {
+    if (!flashEl) return;
+    flashEl.textContent = msg; flashEl.style.display = 'block';
+    clearTimeout(flash.t);
+    flash.t = setTimeout(() => { if (flashEl) { flashEl.textContent = ''; flashEl.style.display = 'none'; } }, 2500);
+  }
   function setSite(name, data) { const s = loadJSON('siteStat', {}); s[name] = data; saveJSON('siteStat', s); render(); }
 
   // 6.9: header buttons outlined like the VTO box (A to Z tiles)
@@ -415,7 +423,7 @@
     box = document.createElement('div');
     box.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483646;width:max-content;max-width:min(96vw,1100px);max-height:90vh;overflow:auto;background:' + C.bg + ';color:' + C.text + ';font:14px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C.border + ';border-radius:8px;box-shadow:0 2px 12px ' + C.shadow + ';';
     const head = document.createElement('div');
-    head.style.cssText = 'padding:8px 10px 8px 14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid ' + C.border + ';';
+    head.style.cssText = 'position:relative;padding:8px 10px 8px 14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid ' + C.border + ';';
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:4px;align-items:center;';
@@ -439,6 +447,9 @@
     btns.appendChild(minBtn);
     head.appendChild(headLabel);
     head.appendChild(btns);
+    flashEl = document.createElement('span');
+    flashEl.style.cssText = 'display:none;position:absolute;top:100%;right:10px;margin-top:4px;z-index:1;font:600 11px/1.6 ' + FONT + ';color:' + C.bg + ';background:' + C.text + ';border-radius:6px;padding:1px 8px;white-space:pre;pointer-events:none;';
+    head.appendChild(flashEl);
     bodyEl = document.createElement('div');
     bodyEl.style.cssText = 'padding:8px 14px 10px;white-space:pre;';
     // click ▸ / site name: open that site's list (click again to close; only one open at a time)
@@ -596,7 +607,6 @@
     let foot = `<div style="border-top:1px solid ${C.border};margin-top:8px;padding-top:8px;color:${C.text};font-weight:700;font-size:15px;">Checks</div>`;
     foot += `<div>${cell('last ', 0, C.gray)}${cell(lastOk ? clock(lastOk) : '—', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('next ', 0, C.gray)}${cell(next > Date.now() ? clock(next) : 'soon', 0, C.azOrange)}</div>`;
     if (st.text && st.kind === 'err') foot += `<div>${cell('! ' + st.text, 0, C.orange)}</div>`;
-    else if (st.text && st.kind === 'ok' && Date.now() - st.t < 60000) foot += `<div>${cell(st.text, 0, C.text)}</div>`;
 
     const html = rows + legend + foot;
     if (html !== lastHtml) { lastHtml = html; bodyEl.innerHTML = html; }   // redraw only when something changed
