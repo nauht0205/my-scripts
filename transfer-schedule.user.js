@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.17
+// @version      6.18
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.17';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.18';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -575,7 +575,7 @@
         }));
         return out.join('\n') || 'none (or no check yet since updating)';
       })(),
-      '--- card tags on the transfer page (6.17)',
+      '--- card tags on the transfer page (6.18)',
       JSON.stringify(loadJSON('twCardCheck', null)),
       '--- log',
       loadJSON('twLog', []).join('\n') || 'empty',
@@ -948,11 +948,12 @@
   let hlPill = null, hlTargets = [], hlIndex = 0;
   // 6.15: find this card's schedule (by its code on the card, or the one schedule with the same type, days and times)
   // to show Inbound / Outbound and the department. Sends nothing.
-  // 6.17: cards don't show the code, and SAH2 often posts the same shift as -OB, -IB and -GC, which look identical.
-  // Those are told apart by walking down the page alongside the page's own list (pageList, same order as its cards).
-  // If that list wasn't caught (script started after the page loaded it), the last check's list in Amazon's order is
-  // used instead, but only while every card lines up with it with nothing skipped. A card that got its tag keeps it,
-  // so cards loading as you scroll don't make tags flicker. When it can't be told: blank, no guess.
+  // 6.18: cards don't show the code, and SAH2 often posts the same shift as -OB, -IB and -GC, which look identical.
+  // The page only keeps some of its cards on screen and swaps them as you scroll, so the cards there are a slice
+  // of the list, not always from the top. The slice is found by its pattern: runs of identical-looking cards, in
+  // order, must line up with exactly one place in the list (the page's own list, in its order; or, if that was
+  // missed, the last check's list in Amazon's order). Then each card is its spot in that place. If the slice
+  // fits nowhere or in more than one place: the identical cards stay blank, no guess.
   const lookKey = (type, days, st, en) => type + '|' + days + '|' + st + '|' + en;
   const jobKey = x => lookKey(x.i.type, x.i.days.split('/').map(d => d.toUpperCase()).sort().join(), x.i.start, x.i.end);
   const cardKey = job => {
@@ -961,45 +962,73 @@
     return lookKey(type, m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join(), w.startTime, w.endTime);
   };
   const kindOf = i => i.dir + '|' + (i.deptName || i.bl) + codeEnd(i.code);
-  const cardTag = new WeakMap();   // card -> { text, i, src }: the tag it got, kept while the card's text stays the same
   let lastCheckNote = '';
-  function cardPlan(entries) {   // entries: [{ card, text, job }] in page order
+  function domSample(card) {   // for copy: how the page builds a card (to see how it swaps cards while scrolling)
+    const out = [];
+    for (let n = card, k = 0; n && n !== document.body && k < 6; n = n.parentElement, k++) {
+      const at = Array.from(n.attributes || []).filter(a => /^(data-|aria-|role|id$)/.test(a.name) && a.name !== 'data-tw').map(a => a.name + '=' + String(a.value).slice(0, 20));
+      const cs = getComputedStyle(n);
+      out.push(n.tagName.toLowerCase() + (at.length ? '[' + at.join(' ') + ']' : '') + (cs.position !== 'static' ? '{' + cs.position + '}' : '') + (cs.transform !== 'none' ? '{t}' : ''));
+    }
+    return out.join(' < ');
+  }
+  function cardPlan(entries) {   // entries: [{ card, text, job }] in order down the page
     const all = loadJSON('siteJobs', {});
     const site = SITES.find(x => location.search.includes(x.id));
     const saved = (site ? (all[site.name] || []) : [].concat(...Object.values(all))).filter(x => x.i);
     const locId = (location.search.match(/locationId=([^&]+)/) || [])[1] || '';
     const fromPage = pageList.jobs.length > 0 && !pageList.partial && (!locId || decodeURIComponent(locId) === pageList.loc);
-    const seq = fromPage ? pageList.jobs : (saved.every(x => x.ord) ? saved.slice().sort((a, b) => a.ord - b.ord) : []);
+    const seq = fromPage ? pageList.jobs : (saved.length && saved.every(x => x.ord) ? saved.slice().sort((a, b) => a.ord - b.ord) : []);
     const src = fromPage ? 'page' : seq.length ? 'check' : 'none';
     const pool = fromPage ? pageList.jobs : saved;
     const byKey = {};
     pool.forEach(x => (byKey[jobKey(x)] = byKey[jobKey(x)] || []).push(x));
-    const plan = new Map();
-    let p = 0, lined = true, sameKind = 0, byOrder = 0, blank = 0, kept = 0, skipped = 0;
+    // sure ones: the code shows on the card, or every schedule with that look is the same kind
     entries.forEach(e => {
+      e.k = cardKey(e.job);
       const coded = pool.filter(x => x.i.code && x.i.code !== '?' && e.text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length)[0];
-      const k = cardKey(e.job), js = byKey[k] || [];
-      // walk down the list alongside the cards
-      let found = null;
-      if (lined && seq.length) {
-        let q = p;
-        while (q < seq.length && jobKey(seq[q]) !== k) q++;
-        if (q < seq.length && (src === 'page' || q === p)) { skipped += q - p; found = seq[q]; p = q + 1; }
-        else lined = false;   // the page and the list part ways here: stop using order from here down
-      }
-      let i = null, how = '';
-      if (coded) { i = coded.i; how = 'code'; }
-      else if (js.length && new Set(js.map(x => kindOf(x.i))).size === 1) { i = js[0].i; how = 'same'; sameKind++; }
-      else if (found) { i = found.i; how = 'order'; byOrder++; }
-      const old = cardTag.get(e.card);
-      if (old && old.text === e.text && !(old.src === 'check' && how === 'order' && src === 'page')) { if (old.i) { plan.set(e.card, old.i); kept++; } return; }
-      if (i) { plan.set(e.card, i); cardTag.set(e.card, { text: e.text, i, src: how === 'order' ? src : 'sure' }); }
-      else if (js.length > 1) blank++;
+      const js = byKey[e.k] || [];
+      e.sure = coded ? coded.i : (js.length && new Set(js.map(x => kindOf(x.i))).size === 1) ? js[0].i : null;
+      e.look2 = js.length > 1;
     });
-    const note = { page: location.search, source: src, pageListed: pageList.jobs.length + (pageList.partial ? ' (first batch missed)' : ''), checkListed: saved.length, cards: entries.length,
-      sameKind, byOrder, lookalikeBlank: blank, keptTags: kept, skipped, linedUpToEnd: lined };
-    const sNote = JSON.stringify(note);
-    if (sNote !== lastCheckNote) { lastCheckNote = sNote; saveJSON('twCardCheck', Object.assign({ at: Date.now() }, note)); }   // saved only when it changes
+    // runs of identical-looking cards, on the page and in the list
+    const seqRuns = [], domRuns = [];
+    seq.forEach((x, n) => { const k = jobKey(x), r = seqRuns[seqRuns.length - 1]; if (r && r.k === k) r.len++; else seqRuns.push({ k, start: n, len: 1 }); });
+    entries.forEach(e => { const r = domRuns[domRuns.length - 1]; if (r && r.k === e.k) r.cards.push(e); else domRuns.push({ k: e.k, cards: [e] }); });
+    const D = domRuns.length, fits = [];
+    for (let o = 0; D && o + D <= seqRuns.length && fits.length < 2; o++) {
+      let ok = true;
+      for (let d = 0; d < D && ok; d++) {
+        const sr = seqRuns[o + d], n = domRuns[d].cards.length;
+        if (sr.k !== domRuns[d].k || n > sr.len || (d > 0 && d < D - 1 && n !== sr.len)) ok = false;
+      }
+      if (ok) fits.push(o);
+    }
+    if (fits.length === 1) {
+      const o = fits[0];
+      domRuns.forEach((dr, d) => {
+        const sr = seqRuns[o + d], n = dr.cards.length;
+        let base;
+        if (n === sr.len) base = sr.start;
+        else if (D === 1) return;                       // only part of one run on screen: can't tell which part
+        else base = d === 0 ? sr.start + sr.len - n : sr.start;   // cut at the top: its last ones; at the bottom: its first ones
+        dr.cards.forEach((e, m) => { e.byOrder = seq[base + m].i; });
+      });
+    }
+    const plan = new Map();
+    let sure = 0, byOrder = 0, blank = 0;
+    entries.forEach(e => {
+      const i = e.sure || e.byOrder || null;
+      if (i) { plan.set(e.card, i); if (e.sure) sure++; else byOrder++; }
+      else if (e.look2) blank++;
+    });
+    const note = { page: location.search, source: src, pageListed: pageList.jobs.length + (pageList.partial ? ' (first batch missed)' : ''),
+      checkListed: saved.length, cardsOnScreen: entries.length, sure, byOrder, lookalikeBlank: blank,
+      fits: D ? (fits.length > 1 ? 'more than one place' : fits.length ? 'one place (list spot ' + (seqRuns[fits[0]].start + 1) + ')' : 'nowhere') : '-',
+      card: entries[0] ? domSample(entries[0].card) : '' };
+    // saved only when something other than the spot changes (scrolling moves the spot)
+    const sNote = JSON.stringify(Object.assign({}, note, { fits: note.fits.replace(/ \(list spot \d+\)/, ''), cardsOnScreen: 0, sure: 0, byOrder: 0, lookalikeBlank: blank ? 1 : 0 }));
+    if (sNote !== lastCheckNote) { lastCheckNote = sNote; saveJSON('twCardCheck', Object.assign({ at: Date.now() }, note)); }
     return plan;
   }
   // 6.15: the green frame goes on the card's own outer box (the bordered tile A to Z draws), not the inner part
@@ -1031,16 +1060,18 @@
     const P = pageColors();
     hlTargets = [];
     // 6.17: read each card's own text without our note on it (the note used to change what the card looked like)
-    const entries = cards.map(card => ({ card, text: cardText(card) })).map(e => Object.assign(e, { r: cardToJob(e.text) })).filter(e => e.r.ok).map(e => Object.assign(e, { job: e.r.job }));
+    const entries = cards.map(card => ({ card, text: cardText(card), top: card.getBoundingClientRect().top })).sort((a, b) => a.top - b.top)
+      .map(e => Object.assign(e, { r: cardToJob(e.text) })).filter(e => e.r.ok).map(e => Object.assign(e, { job: e.r.job }));
     const plan = cardPlan(entries);
     entries.forEach(({ card, text, r }) => {
       const pi = plan.get(card);
       const sig = text.length + ':' + text.slice(0, 80) + ':' + (pi ? pi.code : '');
       const ev = evaluate(r.job);
       if (ev.match) hlTargets.push(card);
-      if (card.getAttribute('data-tw') === sig) return;     // already marked, unchanged
+      const old = card.querySelector(':scope > .tw-badge');
+      if (old && card.getAttribute('data-tw') === sig) return;     // already marked, unchanged (6.18: and the note is still there)
       card.setAttribute('data-tw', sig);
-      const old = card.querySelector(':scope > .tw-badge'); if (old) old.remove();
+      if (old) { old.twOurs = true; old.remove(); }
       const badge = document.createElement('div');
       badge.className = 'tw-badge';
       badge.style.cssText = 'font:700 13px ' + FONT + ';margin:0 0 6px 0;';
@@ -1068,6 +1099,10 @@
       }
       card.insertBefore(badge, card.firstChild);
     });
+    // 6.18: the counter counts the whole site list from the last check, not the cards on screen right now
+    // (the page swaps cards in and out as you scroll, so that number kept changing)
+    const siteNow = SITES.find(x => location.search.includes(x.id));
+    const sl = siteNow ? (loadJSON('siteJobs', {})[siteNow.name] || []) : [];
     // counter pill: "★ 2 matches  next ↓" (top right); click jumps to the next match
     if (!hlPill) {
       hlPill = document.createElement('div');
@@ -1080,12 +1115,13 @@
       });
       document.body.appendChild(hlPill);
     }
-    const total = cards.length;
-    hlPill.style.display = total ? 'block' : 'none';
-    hlPill.style.borderColor = hlTargets.length ? C.green : C.gray;
-    hlPill.textContent = hlTargets.length
-      ? STAR + ' ' + hlTargets.length + ' match' + (hlTargets.length > 1 ? 'es' : '') + ' of ' + total + '   next ↓'
+    const total = sl.length || cards.length, nm = sl.length ? sl.filter(x => x.match).length : hlTargets.length;
+    hlPill.style.display = cards.length ? 'block' : 'none';
+    hlPill.style.borderColor = nm ? C.green : C.gray;
+    const pillText = nm
+      ? STAR + ' ' + nm + ' match' + (nm > 1 ? 'es' : '') + ' of ' + total + (hlTargets.length ? '   next ↓' : '   (scroll to find)')
       : 'no matches (' + total + ' schedules)';
+    if (hlPill.textContent !== pillText) hlPill.textContent = pillText;
   }
 
   function startHighlighter() {
@@ -1093,15 +1129,22 @@
     let pending = false;
     const run = () => { pending = false; try { markCards(); } catch (e) {} };
     const ours = n => n.nodeType === 1 && n.classList.contains('tw-badge');
+    const soon = () => { if (pending) return; pending = true; requestAnimationFrame(run); };   // once per frame at most, before it paints
     new MutationObserver(recs => {
+      // 6.18: when the page redraws a card it can drop our note; put the same note straight back (before it paints)
+      recs.forEach(r => r.removedNodes.forEach(n => {
+        if (!ours(n) || n.twOurs) return;
+        const c = r.target;
+        if (c && c.isConnected && !c.querySelector(':scope > .tw-badge')) { try { c.insertBefore(n, c.firstChild); } catch (e) {} }
+      }));
       if (pending) return;
       if (recs.every(r => (box && box.contains(r.target)) || (hlPill && hlPill.contains(r.target)) ||
         (r.target.classList && r.target.classList.contains('tw-badge')) || (r.target.closest && r.target.closest('.tw-badge')) ||
         // 6.17: our own note going on or off a card is not a page change (that loop made scrolling laggy)
         ([...r.addedNodes, ...r.removedNodes].length && [...r.addedNodes, ...r.removedNodes].every(ours)))) return;
-      pending = true; setTimeout(run, 400);
+      soon();
     }).observe(document.body, { childList: true, subtree: true });
-    markSoon = () => { if (!pending) { pending = true; setTimeout(run, 200); } };
+    markSoon = soon;
     run();
   }
 
