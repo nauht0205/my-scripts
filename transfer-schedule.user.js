@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.15
+// @version      6.16
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.15';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.16';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -575,6 +575,8 @@
         }));
         return out.join('\n') || 'none (or no check yet since updating)';
       })(),
+      '--- card order check on the transfer page (6.16)',
+      JSON.stringify(loadJSON('twCardCheck', null)),
       '--- log',
       loadJSON('twLog', []).join('\n') || 'empty',
     ].join('\n');
@@ -662,14 +664,16 @@
     const list = [];                     // every relevant schedule, for the box's site list
     let openCount = 0, openMatches = 0, flexListed = 0, flexOpen = 0;
 
+    let ord = 0;   // 6.16: the order Amazon sends the schedules in (to tell identical-looking cards apart)
     for (const j of jobs) {
+      ord++;
       const open = av.statusMode ? av.open.has(j.id) : true;
       cur[j.id] = open;
       const relevant = !site.onlyFlex || isFlex(j);
       if (!relevant) continue;
       const ev = evaluate(j);
       list.push({
-        id: j.id, i: info(j), match: ev.match, reasons: ev.reasons, rk: rankKey(j, ev), open,
+        id: j.id, i: info(j), match: ev.match, reasons: ev.reasons, rk: rankKey(j, ev), open, ord,
         spots: av.statusMode ? (open ? 'spots: ' + cap(av.open.get(j.id)) : 'no spots') : '',
       });
       if (open) { openCount++; if (ev.match) openMatches++; }
@@ -894,19 +898,52 @@
   let hlPill = null, hlTargets = [], hlIndex = 0;
   // 6.15: find this card's schedule in the last check's saved list (by its code on the card, or else the one
   // schedule with the same type, days and times) to show Inbound / Outbound and the department. Sends nothing.
-  function cardInfo(text, job) {
+  // 6.16: cards don't show the schedule code, and SAH2 often posts the same shift as -OB, -IB and -GC, which look
+  // identical. Those are told apart by order: the 1st of the identical cards on the page = the 1st of those schedules
+  // in the order Amazon sent them, and so on. Used only when the page passes a check: the same number of cards as
+  // schedules for each look, and every card's schedule in Amazon's order down the page. Otherwise: blank, no guess.
+  const lookKey = (type, days, st, en) => type + '|' + days + '|' + st + '|' + en;
+  function cardPlan(entries) {   // entries: [{ card, text, job }] in page order
     const all = loadJSON('siteJobs', {});
     const site = SITES.find(x => location.search.includes(x.id));
-    const list = site ? (all[site.name] || []) : [].concat(...Object.values(all));
-    const byCode = list.filter(x => x.i && x.i.code && text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length);
-    if (byCode.length) return byCode[0].i;
-    const m = job.scheduleMetadata[0], days = m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join();
-    const type = /^FLEX/.test(m.type) ? 'Flex' : m.type === 'PART_TIME' ? 'Part-time' : m.type === 'FULL_TIME' ? 'Full-time' : '';
-    const st = (m.normalWorkingDays[0] || {}).startTime, en = (m.normalWorkingDays[0] || {}).endTime;
-    const same = list.filter(x => x.i && x.i.type === type && x.i.start === st && x.i.end === en &&
-      x.i.days.split('/').map(d => d.toUpperCase()).sort().join() === days);
-    const keys = new Set(same.map(x => x.i.dir + '|' + (x.i.deptName || x.i.bl) + codeEnd(x.i.code)));
-    return keys.size === 1 ? same[0].i : null;   // several different ones (e.g. -OB / -IB / -GC with the same times): unknown
+    const list = (site ? (all[site.name] || []) : [].concat(...Object.values(all))).filter(x => x.i);
+    const jobKey = x => lookKey(x.i.type, x.i.days.split('/').map(d => d.toUpperCase()).sort().join(), x.i.start, x.i.end);
+    const cardKey = job => {
+      const m = job.scheduleMetadata[0], w = m.normalWorkingDays[0] || {};
+      const type = /^FLEX/.test(m.type) ? 'Flex' : m.type === 'PART_TIME' ? 'Part-time' : m.type === 'FULL_TIME' ? 'Full-time' : '';
+      return lookKey(type, m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join(), w.startTime, w.endTime);
+    };
+    const jobsByKey = {}, cardsByKey = {};
+    list.slice().sort((a, b) => (a.ord || 0) - (b.ord || 0)).forEach(x => (jobsByKey[jobKey(x)] = jobsByKey[jobKey(x)] || []).push(x));
+    const plan = new Map(), byOrder = new Map();
+    entries.forEach(e => {
+      const coded = list.filter(x => x.i.code && e.text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length)[0];
+      if (coded) { plan.set(e.card, coded.i); return; }
+      const k = cardKey(e.job);
+      (cardsByKey[k] = cardsByKey[k] || []).push(e.card);
+    });
+    let same = 0, mismatch = 0, ordered = 0;
+    Object.keys(cardsByKey).forEach(k => {
+      const cs = cardsByKey[k], js = jobsByKey[k] || [];
+      const kinds = new Set(js.map(x => x.i.dir + '|' + (x.i.deptName || x.i.bl) + codeEnd(x.i.code)));
+      if (js.length && kinds.size === 1) { cs.forEach(c => plan.set(c, js[0].i)); return; }   // all alike: no order needed
+      if (cs.length !== js.length || !js.every(x => x.ord)) { mismatch++; return; }
+      same++;
+      cs.forEach((c, n) => byOrder.set(c, js[n]));
+    });
+    // order check: every card placed by order (and every card with a one-of-a-kind look) must follow Amazon's order down the page
+    let last = 0, ok = true;
+    entries.forEach(e => {
+      let x = byOrder.get(e.card);
+      if (!x) { const k = cardKey(e.job), js = jobsByKey[k] || []; if (js.length === 1 && (cardsByKey[k] || []).length === 1) x = js[0]; }
+      if (!x || !x.ord) return;
+      if (x.ord < last) ok = false;
+      last = x.ord; ordered++;
+    });
+    if (ok) byOrder.forEach((x, c) => plan.set(c, x.i));
+    saveJSON('twCardCheck', { at: Date.now(), page: location.search, cards: entries.length, schedules: list.length,
+      lookalikeGroups: same, countMismatch: mismatch, checkedInOrder: ordered, orderOk: ok });
+    return plan;
   }
   // 6.15: the green frame goes on the card's own outer box (the bordered tile A to Z draws), not the inner part
   function frameOf(card) {
@@ -932,9 +969,12 @@
     const cards = findCards();
     const P = pageColors();
     hlTargets = [];
+    const entries = cards.map(card => ({ card, text: card.innerText || '' })).map(e => Object.assign(e, { r: cardToJob(e.text) })).filter(e => e.r.ok).map(e => Object.assign(e, { job: e.r.job }));
+    const plan = cardPlan(entries);
     cards.forEach(card => {
       const text = card.innerText || '';
-      const sig = text.length + ':' + text.slice(0, 80);
+      const pi = plan.get(card);
+      const sig = text.length + ':' + text.slice(0, 80) + ':' + (pi ? pi.code : '');
       const r = cardToJob(text);
       if (!r.ok) return;
       const ev = evaluate(r.job);
@@ -957,7 +997,7 @@
         badge.textContent = '✗ ' + ev.reasons.join(', ');
       }
       // 6.15: second line: Inbound / Outbound and the department, colored like the box
-      const ci = cardInfo(text, r.job);
+      const ci = plan.get(card);
       if (ci && (ci.dir || ci.deptName || ci.bl)) {
         const line = document.createElement('div');
         line.style.cssText = 'font-weight:600;margin-top:2px;';
