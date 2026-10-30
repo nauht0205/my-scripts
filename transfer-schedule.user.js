@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.10
+// @version      6.11
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.10';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.11';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -365,7 +365,7 @@
 
   // ================= STATUS BOX =================
   // 6.9: A to Z look like VTO Auto Accept 4.69: light (white box, navy text) or dark (the dark A to Z page).
-  // Its own Light / Dark button in the header (saved as twTheme, default light; not tied to the VTO box). Same color for the same thing as before;
+  // Its own Light / Dark button (6.11: on the last / next line at the bottom; saved as twTheme, default light; not tied to the VTO box). Same color for the same thing as before;
   // on white, each color is a deeper shade of it so it stays readable. Last / next check times are A to Z orange.
   const THEMES = {
     light: { bg: '#ffffff', border: '#d1d1d9', btnLine: '#cfd0d8', shadow: 'rgba(22,30,45,.18)', text: '#161e2d', onWarn: '#ffffff',
@@ -427,10 +427,6 @@
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:4px;align-items:center;';
-    const modeBtn = mkBtn(themeNow === 'dark' ? '☾ Dark' : '☀ Light', () => { GM_setValue('twTheme', themeNow === 'dark' ? 'light' : 'dark'); render(); });
-    modeBtn.title = 'switch the Transfer box between light and dark';
-    if (themeNow === 'dark') modeBtn.style.background = '#2c2c38';
-    btns.appendChild(modeBtn);
     btns.appendChild(mkBtn('check', checkNow));
     btns.appendChild(mkBtn('copy', () => copyText(report()).then(ok => setStatus(ok ? 'ok' : 'err', ok ? 'copied - paste it to Claude' : 'copy failed'))));
     btns.appendChild(mkBtn('test', () => {
@@ -454,6 +450,12 @@
     bodyEl.style.cssText = 'padding:8px 14px 10px;white-space:pre;';
     // click ▸ / site name: open that site's list (click again to close; only one open at a time)
     bodyEl.addEventListener('click', e => {
+      // 6.11: "mode:" Light / Dark switch on the last / next line
+      if (e.target && e.target.closest && e.target.closest('[data-mode]')) {
+        e.stopPropagation();
+        GM_setValue('twTheme', themeNow === 'dark' ? 'light' : 'dark'); render();
+        return;
+      }
       // "open" / "copy" next to a site: open its schedule list in a NEW tab (never this VTO tab), or copy its link
       const act = e.target && e.target.closest && e.target.closest('[data-act]');
       if (act) {
@@ -555,7 +557,7 @@
     else if (running) label = 'Checking…';
     else if (err.fails >= 2) { label = 'PROBLEM - CHECK SIGN-IN'; bar = true; }
     else if (err.fails === 1) { label = 'LAST CHECK FAILED'; bar = true; }
-    else if (inQuietWindow()) label = 'Paused for VTO :59:30-:01:00';
+    else if (inQuietWindow()) label = 'Paused';   // 6.11: short (no checks :59:30-:01:00 around the 8 AM-2 PM VTO drops)
     const headTxt = 'Transfer ' + VERSION + '|' + label + '|' + bar;
     if (headTxt !== lastHead) {
       lastHead = headTxt;
@@ -605,7 +607,7 @@
     const lastOk = GM_getValue('lastCheckAt', 0);
     const next = GM_getValue('nextDue', 0);
     let foot = `<div style="border-top:1px solid ${C.border};margin-top:8px;padding-top:8px;color:${C.text};font-weight:700;font-size:15px;">Checks</div>`;
-    foot += `<div>${cell('last ', 0, C.gray)}${cell(lastOk ? clock(lastOk) : '—', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('next ', 0, C.gray)}${cell(next > Date.now() ? clock(next) : 'soon', 0, C.azOrange)}</div>`;
+    foot += `<div>${cell('last ', 0, C.gray)}${cell(lastOk ? clock(lastOk) : '—', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('next ', 0, C.gray)}${cell(next > Date.now() ? clock(next) : 'soon', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('mode: ', 0, C.gray)}<span data-mode="1" title="switch the Transfer box between light and dark" style="padding:0 8px;border:1px solid ${C.btnLine};border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;color:${C.text};background:${themeNow === 'dark' ? '#2c2c38' : C.bg}">${themeNow === 'dark' ? '☾ Dark' : '☀ Light'}</span></div>`;
     if (st.text && st.kind === 'err') foot += `<div>${cell('! ' + st.text, 0, C.orange)}</div>`;
 
     const html = rows + legend + foot;
