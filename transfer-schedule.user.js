@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.13
+// @version      6.14
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.13';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.14';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -67,11 +67,13 @@
   // Your schedule preferences (fixed schedules; flex always matches).
   const PREFS = {
     shiftTypes: ['DAY', 'SWING', 'NIGHT'],  // any shift type; the time window below decides
-    blockedDays: ['FRIDAY', 'SATURDAY'],  // also blocks an OT day on these days
-    earliestStart: '06:00',               // Mon-Thu shifts start at 6:00 AM or later
-    sundayEarliestStart: '13:00',         // a Sunday shift must start at 1:00 PM or later
+    // 6.14 (Martin, 10/30): 5 AM starts and 5-day weeks are OK; Friday only if it ends by midnight; Sunday from 2 PM
+    blockedDays: ['SATURDAY'],            // never (also an OT day on Saturday)
+    earliestStart: '05:00',               // Mon-Fri shifts start at 5:00 AM or later
+    fridayLatestEnd: '24:00',             // a Friday shift (or Friday OT day) must end by midnight, not into Saturday
+    sundayEarliestStart: '14:00',         // a Sunday shift (or Sunday OT day) must start at 2:00 PM or later
     latestEnd: '01:30',                   // a time after midnight means the next day
-    maxDaysPerWeek: 4,                    // 5+ working days = no match (part time and full time)
+    maxDaysPerWeek: 5,                    // 6+ working days = no match (part time and full time)
     // 6.8: full time no longer has to be 10-hour shifts; days and times above still decide a match
   };
 
@@ -230,19 +232,25 @@
     const otBlocked = (m.overtimeDays || []).filter(d => PREFS.blockedDays.includes(d.day)).map(d => cap(d.day.slice(0, 3)));
     if (otBlocked.length) reasons.push('OT day ' + otBlocked.join('/'));
     const startMin = toMin(PREFS.earliestStart), endLimit = 1440 + toMin(PREFS.latestEnd);
-    let earlyDay = '', earlySun = '';   // one combined "starts too early" reason instead of two
+    const friEnd = toMin(PREFS.fridayLatestEnd), sunStart = toMin(PREFS.sundayEarliestStart);
+    // 6.14: Friday must end by midnight, Sunday must start at 2 PM or later (work days and OT days alike)
+    const friSun = (d, ot) => {
+      if (!d.startTime || !d.endTime) return;
+      const s = toMin(d.startTime); let e = toMin(d.endTime);
+      if (e <= s) e += 1440;
+      if (d.day === 'FRIDAY' && e > friEnd) reasons.push((ot ? 'OT day ' : '') + 'Fri ends ' + d.endTime + ' (must end by 00:00)');
+      if (d.day === 'SUNDAY' && s < sunStart) reasons.push((ot ? 'OT day ' : '') + 'Sun starts ' + d.startTime + ' (needs ' + PREFS.sundayEarliestStart + '+)');
+    };
+    let earlyDay = '';
     days.forEach(d => {
       const s = toMin(d.startTime); let e = toMin(d.endTime);
       if (e <= s) e += 1440;
-      if (d.day === 'SUNDAY') { if (s < toMin(PREFS.sundayEarliestStart)) earlySun = d.startTime; }
-      else if (s < startMin) earlyDay = d.startTime;
+      if (d.day !== 'SUNDAY' && s < startMin) earlyDay = d.startTime;
       if (e > endLimit) reasons.push('ends ' + d.endTime);
+      friSun(d, false);
     });
-    if (earlyDay && earlySun && earlyDay === earlySun) reasons.push('starts ' + earlyDay + ' (too early)');
-    else {
-      if (earlyDay) reasons.push('starts ' + earlyDay + ' (needs ' + PREFS.earliestStart + '+)');
-      if (earlySun) reasons.push('Sun starts ' + earlySun + ' (needs ' + PREFS.sundayEarliestStart + '+)');
-    }
+    (m.overtimeDays || []).forEach(d => friSun(d, true));
+    if (earlyDay) reasons.push('starts ' + earlyDay + ' (needs ' + PREFS.earliestStart + '+)');
     if (days.length > PREFS.maxDaysPerWeek) reasons.push(days.length + ' days/wk');
     return { match: reasons.length === 0, reasons: [...new Set(reasons)], sunday: days.some(d => d.day === 'SUNDAY') };
   }
@@ -537,7 +545,7 @@
       const mark = x.match ? cell(STAR, 0, C.green, true) : cell('✗', 0, C.red, true);
       let h = `<div${n ? ' style="margin-top:5px"' : ''}>${mark} ${cell(x.i.code, 0, C.text, true)}  ${colored(headParts(x.i))}</div>`;
       h += `<div style="padding-left:2ch">${colored(detailParts(x.i, x.spots))}</div>`;
-      if (!x.match) h += `<div style="padding-left:2ch">${cell('why: ' + x.reasons.join(', '), 0, C.pink)}</div>`;
+      if (!x.match) h += `<div style="padding-left:2ch">${cell('why: ' + x.reasons.join(', '), 0, C.red)}</div>`;   // 6.14: red like the ✗
       return h;
     }).join(''));
   }
