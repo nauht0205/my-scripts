@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.67
+// @version      4.68
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -246,7 +246,11 @@
   //   the [Reset] tag (now [LogOut]). Sign-ins say "Amazon remembered you" or "passkey used". Old saved lines are reworded once.
   // 4.67 (Martin, 10/30): VTO events lines stay in the box for 24 h (were cleared at midnight), and the counts line reads
   //   "recent:" and counts the last 24 h (accepted / missed from VTO results, errors from the error list).
-  const VERSION = '4.67';
+  // 4.68 (Martin, 10/30): A to Z look: white box, A to Z font and colors (navy text, gray labels and times, A to Z orange,
+  // VTO Accepted green), outlined header buttons, white header while watching (orange while accepting / delayed, green when accepted),
+  // section names in bold sentence case, VTO events as cards grouped under the VTO's day like the VTO page,
+  // Critical Alert and Priority on one line, "auto signed-in (3s)".
+  const VERSION = '4.68';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -977,10 +981,10 @@
       : e.k === 'close' ? 'launcher closed' + (e.ran ? ' - ran ' + gapText(e.ran / 60000) : '')
       // 4.49: Martin's wording: "Amazon signed you out", "you signed out inside A to Z", "you clicked log out", "you signed in"
       : e.k === 'out' ? (e.why === 'manual' ? 'you signed out inside A to Z' : e.why === 'reset' ? 'you clicked log out' : 'session ended') + (e.after ? ' (' + gapText(e.after / 60000) + ')' : '')
-      : (e.how === 'auto' ? 'Auto' : 'you signed in') + ' (' + e.secs + 's)';
+      : (e.how === 'auto' ? 'auto signed-in' : 'you signed in') + ' (' + e.secs + 's)';
     // 4.64: session ended = pink like launcher closed; Auto = teal like launcher opened
     const c = e.k === 'open' ? C_MINT : e.k === 'close' ? C_BAD : e.k === 'out' ? (e.why === 'manual' || e.why === 'reset' ? C_PURPLE : C_BAD) : e.how === 'auto' ? C_MINT : C_CYAN;
-    return { fix: true, parts: [{ t: '  ' + sessWhen(e.t) + '  ', c: C_BASE }, { t: txt, c: c }] };
+    return { fix: true, parts: [{ t: '  ' + sessWhen(e.t) + '  ', c: C_TIME }, { t: txt, c: c }] };
   }
 
   /* ================= NO INTERNET vs THE MAC SLEEPING (4.29) ================= */
@@ -1666,14 +1670,16 @@
     setTimeout(function () { if (flashEl) flashEl.textContent = ''; }, 1500);
   }
   // 4.26: solid buttons (box purple, white text), lighter on hover, pressed down a little on click
+  // 4.68: header buttons outlined like the A to Z tiles; a button with its own color (in a line) is a pill
   function mkBtn(label, fn, color, bg) {
-    bg = bg || '#ffffff';   // 4.60: header buttons are white with blue words (was purple)
-    if (!color && bg === '#ffffff') color = C_HEAD2;
+    const pill = !!bg;
+    bg = bg || '#ffffff';
     const b = document.createElement('button');
     b.textContent = label;
-    b.style.cssText = 'background:' + bg + ';color:' + (color || '#ffffff') + ';border:0;border-radius:5px;font:bold 11px/1.4 \'JetBrains Mono\',Menlo,Consolas,monospace;padding:2px 8px;cursor:pointer;display:inline-flex;align-items:center;vertical-align:middle;box-shadow:0 1px 2px rgba(0,0,0,.4);';
-    b.addEventListener('mouseenter', function () { b.style.background = bg === '#ffffff' ? '#dbe6ff' : '#34405c'; });   // 4.60
-    b.addEventListener('mouseleave', function () { b.style.background = bg; b.style.transform = ''; });
+    b.style.cssText = 'background:' + bg + ';color:' + (color || C_BASE) + ';font:600 12px/1.5 ' + FONT + ';cursor:pointer;display:inline-flex;align-items:center;vertical-align:middle;' +
+      (pill ? 'border:0;border-radius:999px;padding:1px 10px;' : 'border:1px solid #cfd0d8;border-radius:6px;padding:2px 9px;');
+    b.addEventListener('mouseenter', function () { b.style.filter = 'brightness(0.94)'; });
+    b.addEventListener('mouseleave', function () { b.style.filter = ''; b.style.transform = ''; });
     b.addEventListener('mousedown', function () { b.style.transform = 'translateY(1px)'; });
     b.addEventListener('mouseup', function () { b.style.transform = ''; });
     b.addEventListener('click', function (e) { e.stopPropagation(); fn(); });
@@ -1721,10 +1727,9 @@
   }
   function buildBox() {
     if (box || !document.body) return;
-    loadFont();
     box = document.createElement('div');
     // 4.26: as wide as its longest fixed line (header, status lines, In-N-Out); long lines wrap; scrolls up and down
-    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:#0d111c;color:#ece8df;font:13px/1.6 "JetBrains Mono",Menlo,Consolas,monospace;border:1px solid #272d3b;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.55);user-select:text;-webkit-user-select:text;cursor:auto;';
+    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:#ffffff;color:' + C_BASE + ';font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C_LINE + ';border-radius:8px;box-shadow:0 2px 12px rgba(22,30,45,.18);user-select:text;-webkit-user-select:text;cursor:auto;';
     // 4.30: you can select and copy any box text (Cmd+C); mouse, selection and copy events stay in the box, not the page
     ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'selectstart', 'copy'].forEach(function (n) { box.addEventListener(n, function (e) { e.stopPropagation(); }); });
     box.id = 'vto-box';
@@ -1732,7 +1737,7 @@
     selCss.textContent = '#vto-box, #vto-box * { -webkit-user-select: text !important; user-select: text !important; }';
     box.appendChild(selCss);
     const head = document.createElement('div');
-    head.style.cssText = 'position:sticky;top:0;padding:6px 8px 6px 12px;font-weight:bold;display:flex;justify-content:space-between;align-items:center;gap:12px;white-space:pre;';
+    head.style.cssText = 'position:sticky;top:0;padding:8px 10px 8px 14px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;white-space:pre;background:#ffffff;border-bottom:1px solid ' + C_LINE + ';';
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:5px;align-items:center;';
@@ -1754,7 +1759,7 @@
     head.appendChild(headLabel);
     head.appendChild(btns);
     bodyEl = document.createElement('div');
-    bodyEl.style.cssText = 'padding:8px 12px 10px;';
+    bodyEl.style.cssText = 'padding:8px 14px 10px;';
     box.appendChild(head);
     box.appendChild(bodyEl);
     box.__head = head;
@@ -1763,20 +1768,24 @@
 
   /* ================= LOG COLORS ================= */
   // text colors: Dracula's bright set (from Martin's picture); background: the darker purple Martin preferred
-  const C_ACCEPT = '#50fa7b';   // green: accepted
-  const C_BASE = '#ece8df';     // 4.63: off-white normal box text, same as Transfer Schedule (was pure white)
-  const C_YEL = '#f6ff9c';      // yellow: missed / [Closed]
-  const C_SECT = '#60a5fa';     // 4.63: sky blue section names (lighter than the header bar)
-  const C_HEAD2 = '#2563eb';    // 4.60: medium blue: top bar while watching + section names (was purple)
-  const C_MISS = '#f82d2d';     // 4.60: red: missed / full
-  const C_HEADTXT = '#ece8df';  // 4.60: off-white header text on the blue bar (same as Transfer Schedule)
-  const C_PURPLE = '#bd93f9';   // 4.65: purple: you clicked log out / you signed out inside A to Z
-  const C_MINT = '#a6f0c6';     // mint: [Remembered]
-  const C_BAD = '#ff92df';      // pink: session ended, launcher closed
-  const C_WARN = '#ffa94d';     // orange: warnings
-  const C_CYAN = '#8be9fd';     // cyan: [Auto] [LogOut]
-  const C_RED = '#ff5555';      // red: [Passkey] (Amazon asked for your passkey)
-  const C_TAG = '#ece8df';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
+  // 4.68: A to Z colors (taken from the A to Z pages): white box, navy text, gray labels, A to Z orange, VTO Accepted green
+  const FONT = '"Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif';   // 4.68: A to Z's own font (the page loads it)
+  const C_ACCEPT = '#009d34';   // green: accepted (A to Z "VTO Accepted")
+  const C_ACCEPT_BG = '#d5f8de';
+  const C_BASE = '#161e2d';     // navy: normal box text
+  const C_TIME = '#5c6471';     // gray: times and labels
+  const C_LINE = '#d1d1d9';     // gray: borders and dividers
+  const C_YEL = '#8a6d00';      // dark yellow: [Closed] (copy only)
+  const C_SECT = '#161e2d';     // section names: bold navy, sentence case
+  const C_MISS = '#cc0c39';     // red: missed / full / session ended / launcher closed
+  const C_MISS_BG = '#fdecef';
+  const C_PURPLE = '#ef6c28';   // 4.68: orange (was purple): you clicked log out / you signed out inside A to Z
+  const C_MINT = '#1d5bd8';     // 4.68: blue: launcher opened / auto signed-in
+  const C_BAD = '#cc0c39';      // red: session ended, launcher closed
+  const C_WARN = '#ef6c28';     // A to Z orange: errors, warnings, Watching
+  const C_CYAN = '#1d5bd8';     // blue: you signed in
+  const C_RED = '#cc0c39';      // red: [Passkey] (Amazon asked for your passkey)
+  const C_TAG = '#161e2d';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
   // log line colors: accepted = green; signed out, delays, errors = orange; missed = pink; everything else white
   function lineColor(t) {
     if (t.indexOf('SIGNED OUT') > -1 || t.indexOf('not logged in') > -1) return C_WARN;   // 4.20: orange
@@ -1791,16 +1800,71 @@
   // 4.60: "  04:35:07 PM rest" -> white time, the rest in its color
   function timeParts(t, c) {
     const m = /^(\s*\d{1,2}:\d{2}:\d{2}\s?[AP]M )([\s\S]*)$/.exec(t);
-    return m ? [{ t: m[1], c: C_BASE }, { t: m[2], c: c }] : [{ t: t, c: c }];
+    return m ? [{ t: m[1], c: C_TIME }, { t: m[2], c: c }] : [{ t: t, c: c }];
+  }
+  // 4.68: VTO events as cards like the VTO page, grouped under the VTO's day.
+  // r.vto looks like "Wed 10/28, 8:30 PM - 12:30 AM" (maybe with " [abc123]")
+  const MON_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function vtoParts(v) {
+    const m = /^(\w{3}) (\d{1,2})\/(\d{1,2}),\s*(\d{1,2}):(\d{2})\s*([AP]M)\s*-\s*(\d{1,2}):(\d{2})\s*([AP]M)/i.exec(String(v || ''));
+    if (!m) return null;
+    const mins = function (h, mi, ap) { return (+h % 12 + (/p/i.test(ap) ? 12 : 0)) * 60 + +mi; };
+    const a = mins(m[4], m[5], m[6]), b = mins(m[7], m[8], m[9]);
+    const len = ((b - a) % 1440 + 1440) % 1440;
+    const lo = function (h, mi, ap) { return +h + ':' + mi + ap.toLowerCase(); };
+    return { day: m[1] + ', ' + MON_NAMES[+m[2] - 1] + ' ' + (+m[3]), key: +m[2] * 100 + +m[3], start: a,
+      time: lo(m[4], m[5], m[6]) + ' - ' + lo(m[7], m[8], m[9]), len: Math.floor(len / 60) + 'hrs ' + (len % 60) + 'mins' };
+  }
+  function vtoCardLines(res) {
+    const nowMon = new Date().getMonth() + 1;
+    const items = res.map(function (r, i) {
+      const p = vtoParts(r.vto);
+      let k = p ? p.key : 9999;
+      if (p && Math.floor(p.key / 100) < nowMon - 6) k += 1200;   // a January VTO seen in December comes after it
+      return { r: r, p: p, k: k, i: i };
+    });
+    items.sort(function (x, y) { return x.k - y.k || (x.p && y.p ? x.p.start - y.p.start : 0) || x.i - y.i; });
+    const out = []; let lastDay = null;
+    items.forEach(function (x) {
+      const day = x.p ? x.p.day : '';
+      if (day !== lastDay) { if (day) out.push({ dayHead: day }); lastDay = day; }
+      const d = new Date(x.r.t);
+      const when = d.toLocaleDateString([], { weekday: 'short' }) + ' ' + (d.getMonth() + 1) + '/' + d.getDate() + ', ' + tShort(x.r.t);
+      out.push({ card: { ok: x.r.kind === 'ok', time: x.p ? x.p.time : String(x.r.vto || 'VTO'), len: x.p ? x.p.len : '',
+        when: when + (x.r.kind === 'ok' && x.r.secs !== null && x.r.secs !== undefined ? ' · ' + x.r.secs + 's' : '') } });
+    });
+    return out;
+  }
+  function vtoCard(c) {
+    const d = document.createElement('div');
+    d.style.cssText = 'box-sizing:border-box;width:0;min-width:100%;border:1px solid ' + (c.ok ? '#2fbf5b' : '#f0a3b3') + ';background:' + (c.ok ? C_ACCEPT_BG : C_MISS_BG) + ';border-radius:6px;padding:4px 10px;margin:4px 0;white-space:normal;';
+    const l1 = document.createElement('div');
+    const t = document.createElement('b'); t.textContent = c.time; l1.appendChild(t);
+    if (c.len) { const n = document.createElement('span'); n.textContent = ' (' + c.len + ')'; n.style.color = C_TIME; l1.appendChild(n); }
+    const l2 = document.createElement('div');
+    const ic = document.createElement('span');
+    ic.textContent = c.ok ? '✓' : '✕';
+    ic.style.cssText = 'display:inline-block;width:14px;height:14px;border-radius:50%;background:' + (c.ok ? C_ACCEPT : C_MISS) + ';color:#fff;font-size:10px;line-height:14px;text-align:center;margin-right:5px;vertical-align:-1px;';
+    const st = document.createElement('span'); st.textContent = c.ok ? 'VTO Accepted' : 'Missed'; st.style.cssText = 'font-weight:600;color:' + (c.ok ? C_ACCEPT : C_MISS) + ';';
+    const w = document.createElement('span'); w.textContent = ' ' + c.when; w.style.color = C_TIME;
+    l2.appendChild(ic); l2.appendChild(st); l2.appendChild(w);
+    d.appendChild(l1); d.appendChild(l2);
+    return d;
   }
   function signParts(t) { return [{ t: t, c: C_WARN }]; }   // 4.20: orange
   function mkLine(item) {
     const d = document.createElement('div');
     if (item && item.heading) {   // 4.13: section name - purple capitals with a line above
       d.textContent = item.heading;
-      d.style.cssText = 'border-top:1px solid #272d3b;margin-top:7px;padding-top:7px;color:' + C_SECT + ';font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;';
+      d.style.cssText = 'border-top:1px solid ' + C_LINE + ';margin-top:9px;padding-top:8px;color:' + C_SECT + ';font-weight:700;font-size:14px;';   // 4.68: bold, sentence case
       return d;
     }
+    if (item && item.dayHead) {   // 4.68: the VTO's day above its cards, like the VTO page
+      d.textContent = item.dayHead;
+      d.style.cssText = 'font-weight:700;margin-top:4px;';
+      return d;
+    }
+    if (item && item.card) return vtoCard(item.card);
     // 4.26: fixed lines (status, In-N-Out) never wrap and set the box width; all other lines wrap inside that
     // width (width 0 + min-width 100% keeps a long line from widening the box). Indented lines wrap under their text.
     const fix = !!(item && item.fix);
@@ -1810,7 +1874,7 @@
     d.style.cssText = fix ? 'white-space:pre;tab-size:4;'
       : 'white-space:pre-wrap;word-break:break-word;tab-size:4;width:0;min-width:100%;' + (indent ? 'padding-left:2ch;box-sizing:border-box;' : '');
     parts.forEach(function (p) {
-      if (p.btn) { const b = mkBtn(p.btn, p.fn, p.c, p.bg || '#1b2130'); b.style.marginLeft = p.first ? '0' : '8px'; d.appendChild(b); return; }   // 4.26: a button inside a line
+      if (p.btn) { const b = mkBtn(p.btn, p.fn, p.c, p.bg); b.style.marginLeft = p.first ? '0' : '8px'; d.appendChild(b); return; }   // 4.26: a button inside a line
       const sp = document.createElement('span');
       sp.textContent = p.t;
       if (p.c) sp.style.color = p.c;
@@ -1852,17 +1916,26 @@
     const last = ls.get('vtoLast', null);
     let status, bg;
     // 4.58: no orange SIGNED OUT bar (the virtual passkey signs you back in within seconds)
-    if (inFlight.size) { status = 'ACCEPTING...'; bg = '#ffa94d'; }
-    else if (last && last.kind === 'ok' && Date.now() - last.t < 30000) { status = 'VTO ACCEPTED'; bg = '#50fa7b'; }
-    else if (!template) { status = 'WAITING FOR LIST REQUEST'; bg = '#ffa94d'; }
-    else if (age > 8 && !signedOutFlag) { status = 'CHECKS DELAYED'; bg = '#ffa94d'; }
-    else if (document.visibilityState === 'hidden') { status = timerMode === 'worker' ? 'WATCHING (TAB HIDDEN - WORKER ON)' : 'WATCHING (TAB HIDDEN - MAY SLOW)'; bg = timerMode === 'worker' ? C_HEAD2 : '#ffa94d'; }
-    else { status = 'WATCHING'; bg = C_HEAD2; }
+    // 4.68: white header with an orange "Watching"; a full orange bar while accepting or when something is wrong, green when accepted
+    if (inFlight.size) { status = 'ACCEPTING...'; bg = C_WARN; }
+    else if (last && last.kind === 'ok' && Date.now() - last.t < 30000) { status = 'VTO ACCEPTED'; bg = C_ACCEPT; }
+    else if (!template) { status = 'WAITING FOR LIST REQUEST'; bg = C_WARN; }
+    else if (age > 8 && !signedOutFlag) { status = 'CHECKS DELAYED'; bg = C_WARN; }
+    else if (document.visibilityState === 'hidden') { status = timerMode === 'worker' ? 'Watching (tab hidden - worker on)' : 'WATCHING (TAB HIDDEN - MAY SLOW)'; bg = timerMode === 'worker' ? '' : C_WARN; }
+    else { status = 'Watching'; bg = ''; }
 
-    // 4.26: API ON while good checks are coming in; API OFF (header turns orange) when signed out, no list request yet, or checks delayed
-    box.__head.style.background = bg;
-    box.__head.style.color = bg === C_HEAD2 ? C_HEADTXT : '#0d111c';   // 4.60: off-white on blue, dark on orange/green
-    headLabel.textContent = 'VTO ' + VERSION + ' | ' + status;   // 4.44: API ON / OFF removed (the header color already shows it)
+    box.__head.style.background = bg || '#ffffff';
+    box.__head.style.borderBottomColor = bg || C_LINE;
+    box.__head.style.color = bg ? '#ffffff' : C_BASE;
+    const headTxt = 'VTO ' + VERSION + ' | ' + status;
+    if (headLabel.__t !== headTxt) {
+      headLabel.__t = headTxt;
+      headLabel.textContent = '';
+      headLabel.appendChild(document.createTextNode('VTO ' + VERSION + ' '));
+      const bar = document.createElement('span'); bar.textContent = '| '; bar.style.cssText = 'font-weight:400;' + (bg ? '' : 'color:' + C_TIME + ';');
+      const st = document.createElement('span'); st.textContent = status; if (!bg) st.style.color = C_WARN;
+      headLabel.appendChild(bar); headLabel.appendChild(st);
+    }
     bodyEl.style.display = collapsed ? 'none' : 'block';
     if (collapsed) { boxKey = ''; return; }
     if (holdForSel()) return;   // 4.30: you are selecting box text: no body redraw until the selection is cleared
@@ -1875,30 +1948,30 @@
     if (!DIRECT_ACCEPT) L.push({ t: '!! mode: clicking only (direct accept off)', c: C_WARN });   // 4.26: shown only when not normal
     if (timerMode !== 'worker') L.push({ t: '!! timers: normal (slow if tab hidden)', c: C_WARN });
     const sv = stayGet();
-    if (sv) L.push({ fix: true, t: 'signed in: ' + dur(Date.now() - sv.since) + ' ago | session reset at ~' + new Date(sv.since + 36000000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) });   // 4.51: Amazon's 10 h limit   // 4.46: just this, on its own line (stay-click counts are kept in copy only)
+    if (sv) L.push({ fix: true, parts: [{ t: 'signed in: ', c: C_TIME }, { t: dur(Date.now() - sv.since) + ' ago | session reset at ~' + new Date(sv.since + 36000000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }] });   // 4.68: gray label   // 4.51: Amazon's 10 h limit   // 4.46: just this, on its own line (stay-click counts are kept in copy only)
     pkBoxLines().forEach(function (x) { L.push(x); });
     const dayAgo = Date.now() - 86400000;   // 4.67: the last 24 h, not since midnight
     const res24 = ls.get('vtoResults', []).filter(function (x) { return x.t > dayAgo; });
     const nOk = res24.filter(function (x) { return x.kind === 'ok'; }).length, nMiss = res24.filter(function (x) { return x.kind === 'missed'; }).length;
     const nErr = ls.get('vtoErrors', []).filter(function (x) { return x.t > dayAgo; }).length;
-    L.push({ fix: true, parts: [{ t: 'recent: ' }, { t: 'accepted ' + nOk, c: C_ACCEPT }, { t: ' | ' }, { t: 'missed ' + nMiss, c: C_MISS }, { t: ' | ' }, { t: 'errors ' + nErr, c: C_WARN }] });
+    L.push({ fix: true, parts: [{ t: 'recent: ', c: C_TIME }, { t: 'accepted ' + nOk, c: C_ACCEPT }, { t: ' | ' }, { t: 'missed ' + nMiss, c: C_MISS }, { t: ' | ' }, { t: 'errors ' + nErr, c: C_WARN }] });
     if (!signedOutFlag && template && age > 8) L.push({ t: '!! CHECKS DELAYED - last good check ' + Math.round(age) + 's ago', c: C_WARN });
     if (document.visibilityState === 'hidden' && timerMode !== 'worker') L.push({ t: '!! TAB HIDDEN - checks may slow down', c: C_WARN });
     if (lastError && age > 3) L.push({ t: 'check problem: ' + lastError, c: C_WARN });   // 4.20: orange
     const clearedAt = ls.get('vtoBoxClearedAt', 0);
     const errResetAt = ls.get('vtoErrReset', 0);
     const ers = ls.get('vtoErrors', []).filter(function (x) { return x.day === today() && x.t > clearedAt && x.t > errResetAt; }).slice(-3);
-    if (ers.length) { L.push({ heading: 'last errors' }); ers.forEach(function (er) { L.push({ parts: timeParts('  ' + errorLine(er), C_WARN) }); }); }
+    if (ers.length) { L.push({ heading: 'Last errors' }); ers.forEach(function (er) { L.push({ parts: timeParts('  ' + errorLine(er), C_WARN) }); }); }
     const res = ls.get('vtoResults', []).filter(function (x) { return x.t > dayAgo && x.t > clearedAt; }).slice(-6);   // 4.67: 24 h
-    if (res.length) { L.push({ heading: 'VTO events' }); res.forEach(function (r) { L.push({ parts: timeParts('  ' + resultLine(r), r.kind === 'ok' ? C_ACCEPT : C_MISS) }); }); }
+    if (res.length) { L.push({ heading: 'VTO events' }); vtoCardLines(res).forEach(function (x) { L.push(x); }); }   // 4.68: cards under the VTO's day
     const pad0 = (r) => String(r).replace(/^(\d):/, '0$1:');   // older lines: 1:05:09 AM -> 01:05:09 AM
     // 4.26: one log: reloads and log lines together by time, last 5
     const logs = boxLog(ls.get('vtoReloads', []), ls.get('vtoLog', []), 5);
-    if (logs.length) { L.push({ heading: 'log' }); logs.forEach(function (r) { const t = '  ' + pad0(r).replace(' (no refresh - direct accept handles it)', ''); L.push({ parts: timeParts(t, lineColor(t)) }); }); }   // 4.61: white time   // 4.13: that note stays in copy only   // (older-style stay lines stay in copy only)
+    if (logs.length) { L.push({ heading: 'Log' }); logs.forEach(function (r) { const t = '  ' + pad0(r).replace(' (no refresh - direct accept handles it)', ''); L.push({ parts: timeParts(t, lineColor(t)) }); }); }   // 4.61: white time   // 4.13: that note stays in copy only   // (older-style stay lines stay in copy only)
     // 4.40: Sessions replaces In-N-Out (the In-N-Out lines are still kept in copy)
     const sess = ls.get('vtoSessions', []).slice(-4);   // 4.50: latest 4 lines only (Martin keeps the box narrow); copy still has them all
     if (sess.length) {
-      L.push({ heading: 'Authentication Session' });
+      L.push({ heading: 'Authentication session' });
       // 4.41: dates padded to one width so the columns line up (like In-N-Out)
       const lines = sess.map(sessLine), w = Math.max.apply(null, lines.map(function (x) { return x.parts[0].t.length; }));
       lines.forEach(function (x) { x.parts[0].t = x.parts[0].t.replace(/\s+$/, '') + ' '.repeat(w - x.parts[0].t.replace(/\s+$/, '').length); L.push(x); });
@@ -1928,9 +2001,9 @@
   function pkBoxLines() {
     const muted = ls.get('vtoAlarmMuted', false);
     const night = nightFirst();
-    return [{ fix: true, parts: [{ t: 'Critical Alert: ' }, { btn: muted ? 'Off' : 'On', fn: toggleAlarm, c: '#ffffff', bg: muted ? '#6b2d3a' : '#1f5f38', first: true }] },
-      // 4.59: Priority: Night Shift (dark blue) <-> Normal (orange)
-      { fix: true, parts: [{ t: 'Priority: ' }, { btn: night ? 'Night Shift' : 'Normal', fn: togglePriority, c: night ? '#ffffff' : '#1d1a2b', bg: night ? '#1e3a8a' : C_WARN, first: true }] }];
+    // 4.68: one line; pills: On green, Off red, Night Shift dark blue, Normal yellow
+    return [{ fix: true, parts: [{ t: 'Critical Alert: ', c: C_TIME }, { btn: muted ? 'Off' : 'On', fn: toggleAlarm, c: muted ? C_MISS : '#00762a', bg: muted ? C_MISS_BG : C_ACCEPT_BG, first: true },
+      { t: '   Priority: ', c: C_TIME }, { btn: night ? 'Night Shift' : 'Normal', fn: togglePriority, c: night ? '#ffffff' : C_BASE, bg: night ? '#1d3f8f' : '#ffcc00', first: true }] }];
   }
   function togglePriority() {
     const night = !nightFirst();
