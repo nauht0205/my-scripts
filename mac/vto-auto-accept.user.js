@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.66
+// @version      4.67
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -244,7 +244,9 @@
   // 4.66 (Martin, 10/29): log out writes one log line, "you clicked log out" (the page click watcher counted the box button too).
   //   Old passkey setup leftovers removed: the copy's passkey section (24 h passkey) and reset line, the "reset passkey" wording,
   //   the [Reset] tag (now [LogOut]). Sign-ins say "Amazon remembered you" or "passkey used". Old saved lines are reworded once.
-  const VERSION = '4.66';
+  // 4.67 (Martin, 10/30): VTO events lines stay in the box for 24 h (were cleared at midnight), and the counts line reads
+  //   "recent:" and counts the last 24 h (accepted / missed from VTO results, errors from the error list).
+  const VERSION = '4.67';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1875,7 +1877,11 @@
     const sv = stayGet();
     if (sv) L.push({ fix: true, t: 'signed in: ' + dur(Date.now() - sv.since) + ' ago | session reset at ~' + new Date(sv.since + 36000000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) });   // 4.51: Amazon's 10 h limit   // 4.46: just this, on its own line (stay-click counts are kept in copy only)
     pkBoxLines().forEach(function (x) { L.push(x); });
-    L.push({ fix: true, parts: [{ t: 'today: ' }, { t: 'accepted ' + s.accepted, c: C_ACCEPT }, { t: ' | ' }, { t: 'missed ' + s.lost, c: C_MISS }, { t: ' | ' }, { t: 'errors ' + s.errors, c: C_WARN }] });
+    const dayAgo = Date.now() - 86400000;   // 4.67: the last 24 h, not since midnight
+    const res24 = ls.get('vtoResults', []).filter(function (x) { return x.t > dayAgo; });
+    const nOk = res24.filter(function (x) { return x.kind === 'ok'; }).length, nMiss = res24.filter(function (x) { return x.kind === 'missed'; }).length;
+    const nErr = ls.get('vtoErrors', []).filter(function (x) { return x.t > dayAgo; }).length;
+    L.push({ fix: true, parts: [{ t: 'recent: ' }, { t: 'accepted ' + nOk, c: C_ACCEPT }, { t: ' | ' }, { t: 'missed ' + nMiss, c: C_MISS }, { t: ' | ' }, { t: 'errors ' + nErr, c: C_WARN }] });
     if (!signedOutFlag && template && age > 8) L.push({ t: '!! CHECKS DELAYED - last good check ' + Math.round(age) + 's ago', c: C_WARN });
     if (document.visibilityState === 'hidden' && timerMode !== 'worker') L.push({ t: '!! TAB HIDDEN - checks may slow down', c: C_WARN });
     if (lastError && age > 3) L.push({ t: 'check problem: ' + lastError, c: C_WARN });   // 4.20: orange
@@ -1883,7 +1889,7 @@
     const errResetAt = ls.get('vtoErrReset', 0);
     const ers = ls.get('vtoErrors', []).filter(function (x) { return x.day === today() && x.t > clearedAt && x.t > errResetAt; }).slice(-3);
     if (ers.length) { L.push({ heading: 'last errors' }); ers.forEach(function (er) { L.push({ parts: timeParts('  ' + errorLine(er), C_WARN) }); }); }
-    const res = ls.get('vtoResults', []).filter(function (x) { return x.day === today() && x.t > clearedAt; }).slice(-6);
+    const res = ls.get('vtoResults', []).filter(function (x) { return x.t > dayAgo && x.t > clearedAt; }).slice(-6);   // 4.67: 24 h
     if (res.length) { L.push({ heading: 'VTO events' }); res.forEach(function (r) { L.push({ parts: timeParts('  ' + resultLine(r), r.kind === 'ok' ? C_ACCEPT : C_MISS) }); }); }
     const pad0 = (r) => String(r).replace(/^(\d):/, '0$1:');   // older lines: 1:05:09 AM -> 01:05:09 AM
     // 4.26: one log: reloads and log lines together by time, last 5
