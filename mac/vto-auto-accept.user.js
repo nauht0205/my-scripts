@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.70
+// @version      4.71
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -255,7 +255,10 @@
   // 4.70 (Martin, 10/30): Critical Alert / Priority / Mode switches show no note (the box no longer stretches for a second);
   //   the other short notes (copied, test sent...) float under the header so the width never changes. Copy also lists
   //   Critical Alert, mode and the page's font.
-  const VERSION = '4.70';
+  // 4.71 (Martin, 10/30): the box uses Amazon Ember, the A to Z app's font (flat-top 3). The font comes from the private
+  //   Script Shelf copy once (like the Pushover keys) and is kept in this site's storage; the public GitHub copy has no font.
+  //   Only the box uses it. Copy shows whether it loaded.
+  const VERSION = '4.71';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1646,7 +1649,7 @@
       'list request: ' + templateSrc,
       'priority: ' + (nightFirst() ? 'Night Shift (night shift VTOs first, then soonest)' : 'Normal (soonest first)'),
       'Critical Alert: ' + (ls.get('vtoAlarmMuted', false) ? 'Off (silent only)' : 'On') + ' | mode: ' + (darkMode() ? 'Dark' : 'Light'),
-      'page font: ' + (function () { try { return getComputedStyle(document.body).fontFamily; } catch (e) { return '?'; } })() + ' | box font: ' + FONT,
+      'box font: ' + fontState,
       'timers ' + timerMode,
       'list ' + listCount + ' open ' + openCount + ' checks ' + checks,
       'last error: ' + lastError,
@@ -1778,7 +1781,30 @@
   /* ================= LOG COLORS ================= */
   // text colors: Dracula's bright set (from Martin's picture); background: the darker purple Martin preferred
   // 4.68: A to Z colors (taken from the A to Z pages): white box, navy text, gray labels, A to Z orange, VTO Accepted green
-  const FONT = '"Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif';   // 4.68: A to Z's own font (the page loads it)
+  const FONT = '"VTO Ember", "Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif';   // 4.71: "VTO Ember" = Amazon Ember loaded by loadBoxFont()
+  // 4.71: Amazon Ember for the box only. FONT_SEED is filled only in the private Script Shelf copy (publish.py empties it
+  //   for GitHub); it is saved once in localStorage (vtoFontEmber) and loaded from there on every page load.
+  const FONT_SEED = /*FONT_SEED*/null/*END*/;
+  let fontState = 'not loaded yet';
+  function loadBoxFont() {
+    try {
+      if (FONT_SEED && FONT_SEED.v) { const old = ls.get('vtoFontEmber', null); if (!old || old.v !== FONT_SEED.v) ls.set('vtoFontEmber', FONT_SEED); }
+      const d = ls.get('vtoFontEmber', null);
+      if (!d || !d.rg) { fontState = 'not saved - paste the Script Shelf copy once to add it (box uses Arial)'; return; }
+      if (!window.FontFace || !document.fonts) { fontState = 'this browser cannot load it'; return; }
+      let left = 0;
+      [['rg', '400'], ['sbd', '600'], ['bd', '700']].forEach(function (x) {
+        if (!d[x[0]]) return;
+        const bin = atob(d[x[0]]); const u = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+        const ff = new FontFace('VTO Ember', u.buffer, { weight: x[1] });
+        left++;
+        ff.load().then(function () { document.fonts.add(ff); if (--left === 0) fontState = 'Amazon Ember loaded'; },
+          function (e) { fontState = 'Amazon Ember failed to load: ' + (e && e.message || e); });
+      });
+    } catch (e) { fontState = 'Amazon Ember failed: ' + e.message; }
+  }
+  loadBoxFont();
   let C_ACCEPT = '#009d34';   // green: accepted (A to Z "VTO Accepted")
   let C_ACCEPT_BG = '#d5f8de';
   let C_BASE = '#161e2d';     // navy: normal box text
