@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.18
+// @version      6.19
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.18';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.19';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -575,7 +575,7 @@
         }));
         return out.join('\n') || 'none (or no check yet since updating)';
       })(),
-      '--- card tags on the transfer page (6.18)',
+      '--- card tags on the transfer page (6.19)',
       JSON.stringify(loadJSON('twCardCheck', null)),
       '--- log',
       loadJSON('twLog', []).join('\n') || 'empty',
@@ -855,7 +855,7 @@
         const first = !(v.pagination && v.pagination.nextToken);
         // a later batch with no first batch caught (script started after the page loaded it): the list is incomplete
         if (first || pageList.loc !== v.locationId) { pageList.partial = !first; pageList.loc = v.locationId || ''; pageList.jobs = []; }
-        r.jobs.forEach(j => { try { pageList.jobs.push({ id: j.id, i: info(j) }); } catch (e) {} });
+        r.jobs.forEach(j => { try { const ev = evaluate(j); pageList.jobs.push({ id: j.id, i: info(j), match: ev.match, reasons: ev.reasons }); } catch (e) {} });
         pageList.at = Date.now();
       });
       if (markSoon) markSoon();
@@ -954,12 +954,12 @@
   // order, must line up with exactly one place in the list (the page's own list, in its order; or, if that was
   // missed, the last check's list in Amazon's order). Then each card is its spot in that place. If the slice
   // fits nowhere or in more than one place: the identical cards stay blank, no guess.
-  const lookKey = (type, days, st, en) => type + '|' + days + '|' + st + '|' + en;
-  const jobKey = x => lookKey(x.i.type, x.i.days.split('/').map(d => d.toUpperCase()).sort().join(), x.i.start, x.i.end);
+  const lookKey = (type, days, st) => type + '|' + days + '|' + st;   // 6.19: no end time (the card's hours leave out the break)
+  const jobKey = x => lookKey(x.i.type, x.i.days.split('/').map(d => d.toUpperCase()).sort().join(), x.i.start);
   const cardKey = job => {
     const m = job.scheduleMetadata[0], w = m.normalWorkingDays[0] || {};
     const type = /^FLEX/.test(m.type) ? 'Flex' : m.type === 'PART_TIME' ? 'Part-time' : m.type === 'FULL_TIME' ? 'Full-time' : '';
-    return lookKey(type, m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join(), w.startTime, w.endTime);
+    return lookKey(type, m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join(), w.startTime);
   };
   const kindOf = i => i.dir + '|' + (i.deptName || i.bl) + codeEnd(i.code);
   let lastCheckNote = '';
@@ -988,7 +988,8 @@
       e.k = cardKey(e.job);
       const coded = pool.filter(x => x.i.code && x.i.code !== '?' && e.text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length)[0];
       const js = byKey[e.k] || [];
-      e.sure = coded ? coded.i : (js.length && new Set(js.map(x => kindOf(x.i))).size === 1) ? js[0].i : null;
+      e.coded = coded || null;
+      e.sure = (js.length && new Set(js.map(x => kindOf(x.i))).size === 1) ? js[0] : null;
       e.look2 = js.length > 1;
     });
     // runs of identical-looking cards, on the page and in the list
@@ -1012,22 +1013,34 @@
         if (n === sr.len) base = sr.start;
         else if (D === 1) return;                       // only part of one run on screen: can't tell which part
         else base = d === 0 ? sr.start + sr.len - n : sr.start;   // cut at the top: its last ones; at the bottom: its first ones
-        dr.cards.forEach((e, m) => { e.byOrder = seq[base + m].i; });
+        dr.cards.forEach((e, m) => { e.byOrder = seq[base + m]; });
       });
+    }
+    // 6.19: the page numbers each card with its spot in its list (data-index on the card's frame). The spot in
+    // the list is the schedule, as long as the schedule there looks like the card (checked for every card).
+    let indexOff = null, byIndex = 0, indexWrong = 0;
+    const withIdx = entries.filter(e => e.idx != null);
+    if (seq.length && withIdx.length) {
+      const score = off => withIdx.filter(e => seq[e.idx + off] && jobKey(seq[e.idx + off]) === e.k).length;
+      indexOff = score(0) >= score(-1) ? 0 : -1;    // numbered from 0 or from 1
+      withIdx.forEach(e => { const x = seq[e.idx + indexOff]; if (x && jobKey(x) === e.k) e.byIdx = x; else indexWrong++; });
     }
     const plan = new Map();
     let sure = 0, byOrder = 0, blank = 0;
     entries.forEach(e => {
-      const i = e.sure || e.byOrder || null;
-      if (i) { plan.set(e.card, i); if (e.sure) sure++; else byOrder++; }
+      const x = e.coded || e.byIdx || e.sure || e.byOrder || null;
+      if (x) { plan.set(e.card, x); if (e.byIdx && !e.coded) byIndex++; else if (e.coded || e.sure) sure++; else byOrder++; }
       else if (e.look2) blank++;
     });
     const note = { page: location.search, source: src, pageListed: pageList.jobs.length + (pageList.partial ? ' (first batch missed)' : ''),
-      checkListed: saved.length, cardsOnScreen: entries.length, sure, byOrder, lookalikeBlank: blank,
+      checkListed: saved.length, cardsOnScreen: entries.length, byIndex, indexFrom: indexOff === null ? 'none' : indexOff === 0 ? 0 : 1, indexWrong, sure, byOrder, lookalikeBlank: blank,
       fits: D ? (fits.length > 1 ? 'more than one place' : fits.length ? 'one place (list spot ' + (seqRuns[fits[0]].start + 1) + ')' : 'nowhere') : '-',
-      card: entries[0] ? domSample(entries[0].card) : '' };
+      card: entries[0] ? domSample(entries[0].card) : '',
+      // 6.19: one card as the script reads it, and the schedule at its spot in the list (to see why it fits or not)
+      sample: entries[0] ? { idx: entries[0].idx, reads: entries[0].k, text: entries[0].text.replace(/\s*\n\s*/g, ' / ').slice(0, 140),
+        listThere: (() => { const x = entries[0].idx != null && seq[entries[0].idx + (indexOff || 0)]; return x ? x.i.code + ' ' + jobKey(x) : 'none'; })() } : null };
     // saved only when something other than the spot changes (scrolling moves the spot)
-    const sNote = JSON.stringify(Object.assign({}, note, { fits: note.fits.replace(/ \(list spot \d+\)/, ''), cardsOnScreen: 0, sure: 0, byOrder: 0, lookalikeBlank: blank ? 1 : 0 }));
+    const sNote = JSON.stringify(Object.assign({}, note, { fits: note.fits.replace(/ \(list spot \d+\)/, ''), cardsOnScreen: 0, sample: 0, byIndex: 0, indexWrong: indexWrong ? 1 : 0, sure: 0, byOrder: 0, lookalikeBlank: blank ? 1 : 0 }));
     if (sNote !== lastCheckNote) { lastCheckNote = sNote; saveJSON('twCardCheck', Object.assign({ at: Date.now() }, note)); }
     return plan;
   }
@@ -1055,18 +1068,26 @@
     const t = card.innerText || '', b = card.querySelector(':scope > .tw-badge');
     return (b ? t.replace(b.innerText || '', '') : t).replace(/\n{2,}/g, '\n').trim();
   }
+  function cardIndex(card) {   // 6.19: the page's own number for this card (its spot in the list), if it has one
+    for (let n = card, k = 0; n && n !== document.body && k < 5; n = n.parentElement, k++) {
+      const v = n.getAttribute && n.getAttribute('data-index');
+      if (v != null && /^\d+$/.test(v)) return +v;
+    }
+    return null;
+  }
   function markCards() {
     const cards = findCards();
     const P = pageColors();
     hlTargets = [];
     // 6.17: read each card's own text without our note on it (the note used to change what the card looked like)
-    const entries = cards.map(card => ({ card, text: cardText(card), top: card.getBoundingClientRect().top })).sort((a, b) => a.top - b.top)
+    const entries = cards.map(card => ({ card, text: cardText(card), top: card.getBoundingClientRect().top, idx: cardIndex(card) })).sort((a, b) => a.top - b.top)
       .map(e => Object.assign(e, { r: cardToJob(e.text) })).filter(e => e.r.ok).map(e => Object.assign(e, { job: e.r.job }));
     const plan = cardPlan(entries);
     entries.forEach(({ card, text, r }) => {
-      const pi = plan.get(card);
+      const px = plan.get(card), pi = px && px.i;
       const sig = text.length + ':' + text.slice(0, 80) + ':' + (pi ? pi.code : '');
-      const ev = evaluate(r.job);
+      // 6.19: once the card's schedule is known, judge the schedule itself (the card's text has no end time)
+      const ev = px && Array.isArray(px.reasons) ? { match: !!px.match, reasons: px.reasons } : evaluate(r.job);
       if (ev.match) hlTargets.push(card);
       const old = card.querySelector(':scope > .tw-badge');
       if (old && card.getAttribute('data-tw') === sig) return;     // already marked, unchanged (6.18: and the note is still there)
@@ -1087,7 +1108,7 @@
         badge.textContent = '✗ ' + ev.reasons.join(', ');
       }
       // 6.15: second line: Inbound / Outbound and the department, colored like the box
-      const ci = plan.get(card);
+      const ci = pi;
       if (ci && (ci.dir || ci.deptName || ci.bl)) {
         const line = document.createElement('div');
         line.style.cssText = 'font-weight:600;margin-top:2px;';
