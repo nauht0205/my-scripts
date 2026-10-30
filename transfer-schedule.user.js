@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.14
+// @version      6.15
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.14';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.15';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -892,8 +892,45 @@
   }
 
   let hlPill = null, hlTargets = [], hlIndex = 0;
+  // 6.15: find this card's schedule in the last check's saved list (by its code on the card, or else the one
+  // schedule with the same type, days and times) to show Inbound / Outbound and the department. Sends nothing.
+  function cardInfo(text, job) {
+    const all = loadJSON('siteJobs', {});
+    const site = SITES.find(x => location.search.includes(x.id));
+    const list = site ? (all[site.name] || []) : [].concat(...Object.values(all));
+    const byCode = list.filter(x => x.i && x.i.code && text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length);
+    if (byCode.length) return byCode[0].i;
+    const m = job.scheduleMetadata[0], days = m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join();
+    const type = /^FLEX/.test(m.type) ? 'Flex' : m.type === 'PART_TIME' ? 'Part-time' : m.type === 'FULL_TIME' ? 'Full-time' : '';
+    const st = (m.normalWorkingDays[0] || {}).startTime, en = (m.normalWorkingDays[0] || {}).endTime;
+    const same = list.filter(x => x.i && x.i.type === type && x.i.start === st && x.i.end === en &&
+      x.i.days.split('/').map(d => d.toUpperCase()).sort().join() === days);
+    const keys = new Set(same.map(x => x.i.dir + '|' + (x.i.deptName || x.i.bl) + codeEnd(x.i.code)));
+    return keys.size === 1 ? same[0].i : null;   // several different ones (e.g. -OB / -IB / -GC with the same times): unknown
+  }
+  // 6.15: the green frame goes on the card's own outer box (the bordered tile A to Z draws), not the inner part
+  function frameOf(card) {
+    let n = card;
+    for (let k = 0; k < 4 && n && n !== document.body; k++, n = n.parentElement) {
+      try {
+        const cs = getComputedStyle(n);
+        if (parseFloat(cs.borderTopWidth) > 0 && parseFloat(cs.borderTopLeftRadius) > 0) return n;
+      } catch (e) {}
+    }
+    return card;
+  }
+  // 6.15: card notes use colors that read well on the page itself (A to Z light or dark), not the box's mode
+  function pageColors() {
+    let dark = false;
+    try {
+      const m = getComputedStyle(document.body).backgroundColor.match(/\d+(\.\d+)?/g);
+      if (m && (m.length < 4 || +m[3] > 0)) dark = (0.299 * m[0] + 0.587 * m[1] + 0.114 * m[2]) < 110;
+    } catch (e) {}
+    return THEMES[dark ? 'dark' : 'light'];
+  }
   function markCards() {
     const cards = findCards();
+    const P = pageColors();
     hlTargets = [];
     cards.forEach(card => {
       const text = card.innerText || '';
@@ -909,13 +946,26 @@
       badge.className = 'tw-badge';
       badge.style.cssText = 'font:700 13px ' + FONT + ';margin:0 0 6px 0;';
       if (ev.match) {
-        card.style.outline = '2px solid ' + C.green; card.style.outlineOffset = '-2px'; card.style.opacity = '';
-        badge.style.color = C.green;
+        const f = frameOf(card);
+        if (f !== card) card.style.outline = '';
+        f.style.outline = '2px solid ' + P.green; f.style.outlineOffset = '-1px'; card.style.opacity = '';
+        badge.style.color = P.green;
         badge.textContent = STAR + ' MATCH' + (r.noSpots ? '  (no spots right now)' : '');
       } else {
-        card.style.outline = ''; card.style.opacity = '';   // not dimmed: you can still apply to any card
-        badge.style.color = C.pink;
+        card.style.outline = ''; frameOf(card).style.outline = ''; card.style.opacity = '';   // not dimmed: you can still apply to any card
+        badge.style.color = P.red;   // 6.15: red like the box's why lines
         badge.textContent = '✗ ' + ev.reasons.join(', ');
+      }
+      // 6.15: second line: Inbound / Outbound and the department, colored like the box
+      const ci = cardInfo(text, r.job);
+      if (ci && (ci.dir || ci.deptName || ci.bl)) {
+        const line = document.createElement('div');
+        line.style.cssText = 'font-weight:600;margin-top:2px;';
+        const add = (t, c) => { if (!t) return; if (line.childNodes.length) line.appendChild(Object.assign(document.createElement('span'), { textContent: ' | ', style: 'color:' + P.gray })); const sp = document.createElement('span'); sp.textContent = t; sp.style.color = c; line.appendChild(sp); };
+        add(ci.dir, ci.dir === 'Outbound' ? P.green : P.orange);
+        if (ci.dir) add(ci.deptName ? 'dept: ' + ci.deptName : '', P.deptBlue);
+        else add((ci.deptName || ci.bl) + codeEnd(ci.code), P.deptBlue);
+        badge.appendChild(line);
       }
       card.insertBefore(badge, card.firstChild);
     });
