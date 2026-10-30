@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.23
+// @version      6.24
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.23';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.24';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -575,7 +575,7 @@
         }));
         return out.join('\n') || 'none (or no check yet since updating)';
       })(),
-      '--- card tags on the transfer page (6.23)',
+      '--- card tags on the transfer page (6.24)',
       JSON.stringify(loadJSON('twCardCheck', null)),
       '--- log',
       loadJSON('twLog', []).join('\n') || 'empty',
@@ -897,7 +897,9 @@
   function siteJobsNow() { const raw = GM_getValue('siteJobs', ''); if (raw !== jobsRaw) { jobsRaw = raw; try { jobsVal = JSON.parse(raw) || {}; } catch (e) { jobsVal = {}; } } return jobsVal; }
   function findCards() {
     // 6.20: A to Z marks its cards; use that when it's there (much cheaper than looking at every button)
-    const marked = Array.from(document.querySelectorAll('[data-test-id="JobCardContext"]'));
+    let marked = [];
+    try { marked = Array.from((W.document || document).querySelectorAll('[data-test-id="JobCardContext"]')); } catch (e) {}
+    if (!marked.length) marked = Array.from(document.querySelectorAll('[data-test-id="JobCardContext"]'));
     if (marked.length) return marked;
     const cards = new Set();
     document.querySelectorAll('button, [role="button"], a').forEach(b => {
@@ -978,7 +980,44 @@
     }
     return out.join(' < ');
   }
+  const readSeen = new Set(), wrongSeen = new Set();   // 6.24: schedules read from the page so far / where the old order way disagreed
   const filterSeen = { key: '', looks: new Map() };   // 6.23: filtered list: card number -> look, as the cards show up
+  // 6.24: the page draws each card from that schedule's own data and keeps it on the card (React). Reading it
+  // there says exactly which schedule a card is, even for identical-looking cards, with no order guessing.
+  const isJob = v => { try { return !!v && typeof v === 'object' && typeof v.scheduleCode === 'string' && !!v.scheduleMetadata; } catch (e) { return false; } };
+  function jobIn(props) {
+    try {
+      if (!props || typeof props !== 'object') return null;
+      if (isJob(props)) return props;
+      for (const k of Object.keys(props)) {
+        if (k === 'children') continue;
+        const v = props[k];
+        if (isJob(v)) return v;
+        if (v && typeof v === 'object' && !Array.isArray(v) && !(v.nodeType)) {
+          for (const k2 of Object.keys(v).slice(0, 40)) if (isJob(v[k2])) return v[k2];
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+  function pageJob(card) {
+    for (let n = card, k = 0; n && n !== document.body && k < 5; n = n.parentElement, k++) {
+      const objs = [n];
+      try { if (n.wrappedJSObject) objs.push(n.wrappedJSObject); } catch (e) {}
+      for (const o of objs) {
+        let keys = [];
+        try { keys = Object.keys(o); } catch (e) {}
+        const pk = keys.find(x => x.indexOf('__reactProps$') === 0);
+        if (pk) { const j = jobIn(o[pk]); if (j) return j; }
+        const fk = keys.find(x => x.indexOf('__reactFiber$') === 0 || x.indexOf('__reactInternalInstance$') === 0);
+        if (fk) {
+          let f = o[fk];
+          for (let d = 0; f && d < 25; d++, f = f.return) { const j = jobIn(f.memoizedProps); if (j) return j; }
+        }
+      }
+    }
+    return null;
+  }
   function schedulesShown() {   // "4 schedules in this location" -> 4 (null if the page doesn't say)
     try {
       const t = document.evaluate("//body//text()[contains(., 'in this location')][not(parent::script)][not(parent::style)]", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -1003,6 +1042,13 @@
       const coded = pool.filter(x => x.i.code && x.i.code !== '?' && e.text.includes(x.i.code)).sort((a, b) => b.i.code.length - a.i.code.length)[0];
       const js = byKey[e.k] || [];
       e.coded = coded || null;
+      // 6.24: the card's own schedule, straight from the page (exact); the list entry when there is one
+      const pj = pageJob(e.card);
+      if (pj) {
+        const hit = pool.find(x => x.id === pj.id) || saved.find(x => x.id === pj.id) || pool.find(x => x.i.code === pj.scheduleCode);
+        if (hit) e.fromPage = hit;
+        else { try { const ev = evaluate(pj); e.fromPage = { id: pj.id, i: info(pj), match: ev.match, reasons: ev.reasons }; } catch (er) {} }
+      }
       e.sure = (js.length && new Set(js.map(x => kindOf(x.i))).size === 1) ? js[0] : null;
       e.look2 = js.length > 1;
     });
@@ -1057,21 +1103,22 @@
       withIdx.forEach(e => { const x = seq[e.idx + indexOff]; if (x && jobKey(x) === e.k) e.byIdx = x; else indexWrong++; });
     }
     const plan = new Map();
-    let sure = 0, byOrder = 0, blank = 0;
+    let sure = 0, byOrder = 0, blank = 0, readFromPage = 0;
     entries.forEach(e => {
-      const x = e.coded || e.byIdx || e.sure || e.byOrder || null;
+      const x = e.fromPage || e.coded || e.byIdx || e.sure || e.byOrder || null;
+      if (e.fromPage) { readFromPage++; readSeen.add(e.fromPage.id); if (e.byIdx && e.byIdx.id !== e.fromPage.id) wrongSeen.add(e.fromPage.id); }
       if (x) { plan.set(e.card, x); if (e.byIdx && !e.coded) byIndex++; else if (e.coded || e.sure) sure++; else byOrder++; }
       else if (e.look2) blank++;
     });
     const note = { page: location.search, source: src, pageListed: pageList.jobs.length + (pageList.partial ? ' (first batch missed)' : ''),
-      checkListed: saved.length, cardsOnScreen: entries.length, byIndex, indexFrom: indexOff === null ? 'none' : indexOff === 0 ? 0 : 1, indexWrong, filter: filtered ? shownN + ' shown' : 'off', byFilter, sure, byOrder, lookalikeBlank: blank,
+      checkListed: saved.length, cardsOnScreen: entries.length, byIndex, indexFrom: indexOff === null ? 'none' : indexOff === 0 ? 0 : 1, indexWrong, filter: filtered ? shownN + ' shown' : 'off', byFilter, readFromPage, readSoFar: readSeen.size, oldWayWouldBeWrong: wrongSeen.size, sure, byOrder, lookalikeBlank: blank,
       fits: D ? (fits.length > 1 ? 'more than one place' : fits.length ? 'one place (list spot ' + (seqRuns[fits[0]].start + 1) + ')' : 'nowhere') : '-',
       card: entries[0] ? (domSampleText || (domSampleText = domSample(entries[0].card))) : '',
       // 6.19: one card as the script reads it, and the schedule at its spot in the list (to see why it fits or not)
       sample: entries[0] ? { idx: entries[0].idx, reads: entries[0].k, text: entries[0].text.replace(/\s*\n\s*/g, ' / ').slice(0, 140),
         listThere: (() => { const x = entries[0].idx != null && seq[entries[0].idx + (indexOff || 0)]; return x ? x.i.code + ' ' + jobKey(x) : 'none'; })() } : null };
     // saved only when something other than the spot changes (scrolling moves the spot)
-    const sNote = JSON.stringify(Object.assign({}, note, { fits: note.fits.replace(/ \(list spot \d+\)/, ''), cardsOnScreen: 0, sample: 0, byIndex: 0, byFilter: 0, indexWrong: indexWrong ? 1 : 0, sure: 0, byOrder: 0, lookalikeBlank: blank ? 1 : 0 }));
+    const sNote = JSON.stringify(Object.assign({}, note, { fits: note.fits.replace(/ \(list spot \d+\)/, ''), cardsOnScreen: 0, sample: 0, byIndex: 0, byFilter: 0, readFromPage: readFromPage ? 1 : 0, indexWrong: indexWrong ? 1 : 0, sure: 0, byOrder: 0, lookalikeBlank: blank ? 1 : 0 }));
     if (sNote !== lastCheckNote) { lastCheckNote = sNote; saveJSON('twCardCheck', Object.assign({ at: Date.now() }, note)); }
     return plan;
   }
