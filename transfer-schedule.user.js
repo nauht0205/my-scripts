@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.19
+// @version      6.20
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.19';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.20';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -575,7 +575,7 @@
         }));
         return out.join('\n') || 'none (or no check yet since updating)';
       })(),
-      '--- card tags on the transfer page (6.19)',
+      '--- card tags on the transfer page (6.20)',
       JSON.stringify(loadJSON('twCardCheck', null)),
       '--- log',
       loadJSON('twLog', []).join('\n') || 'empty',
@@ -892,7 +892,13 @@
   const to24 = (h, m, ap) => String((+h % 12) + (/p/i.test(ap) ? 12 : 0)).padStart(2, '0') + ':' + m;
   const shown = el => !!(el && (el.offsetParent || (el.getClientRects && el.getClientRects().length)));
 
+  // 6.20: the saved site lists, parsed again only when they change (not on every scroll step)
+  let jobsRaw = null, jobsVal = {};
+  function siteJobsNow() { const raw = GM_getValue('siteJobs', ''); if (raw !== jobsRaw) { jobsRaw = raw; try { jobsVal = JSON.parse(raw) || {}; } catch (e) { jobsVal = {}; } } return jobsVal; }
   function findCards() {
+    // 6.20: A to Z marks its cards; use that when it's there (much cheaper than looking at every button)
+    const marked = Array.from(document.querySelectorAll('[data-test-id="JobCardContext"]'));
+    if (marked.length) return marked;
     const cards = new Set();
     document.querySelectorAll('button, [role="button"], a').forEach(b => {
       if (!/^\s*Apply\s*$/i.test(b.innerText || b.textContent || '') || !shown(b) || (box && box.contains(b))) return;
@@ -962,7 +968,7 @@
     return lookKey(type, m.normalWorkingDays.map(d => d.day.slice(0, 3)).sort().join(), w.startTime);
   };
   const kindOf = i => i.dir + '|' + (i.deptName || i.bl) + codeEnd(i.code);
-  let lastCheckNote = '';
+  let lastCheckNote = '', domSampleText = '';
   function domSample(card) {   // for copy: how the page builds a card (to see how it swaps cards while scrolling)
     const out = [];
     for (let n = card, k = 0; n && n !== document.body && k < 6; n = n.parentElement, k++) {
@@ -973,7 +979,7 @@
     return out.join(' < ');
   }
   function cardPlan(entries) {   // entries: [{ card, text, job }] in order down the page
-    const all = loadJSON('siteJobs', {});
+    const all = siteJobsNow();
     const site = SITES.find(x => location.search.includes(x.id));
     const saved = (site ? (all[site.name] || []) : [].concat(...Object.values(all))).filter(x => x.i);
     const locId = (location.search.match(/locationId=([^&]+)/) || [])[1] || '';
@@ -1035,7 +1041,7 @@
     const note = { page: location.search, source: src, pageListed: pageList.jobs.length + (pageList.partial ? ' (first batch missed)' : ''),
       checkListed: saved.length, cardsOnScreen: entries.length, byIndex, indexFrom: indexOff === null ? 'none' : indexOff === 0 ? 0 : 1, indexWrong, sure, byOrder, lookalikeBlank: blank,
       fits: D ? (fits.length > 1 ? 'more than one place' : fits.length ? 'one place (list spot ' + (seqRuns[fits[0]].start + 1) + ')' : 'nowhere') : '-',
-      card: entries[0] ? domSample(entries[0].card) : '',
+      card: entries[0] ? (domSampleText || (domSampleText = domSample(entries[0].card))) : '',
       // 6.19: one card as the script reads it, and the schedule at its spot in the list (to see why it fits or not)
       sample: entries[0] ? { idx: entries[0].idx, reads: entries[0].k, text: entries[0].text.replace(/\s*\n\s*/g, ' / ').slice(0, 140),
         listThere: (() => { const x = entries[0].idx != null && seq[entries[0].idx + (indexOff || 0)]; return x ? x.i.code + ' ' + jobKey(x) : 'none'; })() } : null };
@@ -1075,55 +1081,77 @@
     }
     return null;
   }
+  // 6.20: smooth scrolling. Each card is read once and remembered; a scroll step only looks at cards that are new
+  // or changed. The note floats in the card's top-right corner, so it never changes the card's height (a taller card
+  // made the page measure and redraw its list again, which showed as blank, laggy scrolling up).
+  const cardMemo = new WeakMap();   // card -> { tc, text, idx, r, job, ver, badge, match }
   function markCards() {
     const cards = findCards();
-    const P = pageColors();
-    hlTargets = [];
-    // 6.17: read each card's own text without our note on it (the note used to change what the card looked like)
-    const entries = cards.map(card => ({ card, text: cardText(card), top: card.getBoundingClientRect().top, idx: cardIndex(card) })).sort((a, b) => a.top - b.top)
-      .map(e => Object.assign(e, { r: cardToJob(e.text) })).filter(e => e.r.ok).map(e => Object.assign(e, { job: e.r.job }));
-    const plan = cardPlan(entries);
-    entries.forEach(({ card, text, r }) => {
-      const px = plan.get(card), pi = px && px.i;
-      const sig = text.length + ':' + text.slice(0, 80) + ':' + (pi ? pi.code : '');
-      // 6.19: once the card's schedule is known, judge the schedule itself (the card's text has no end time)
-      const ev = px && Array.isArray(px.reasons) ? { match: !!px.match, reasons: px.reasons } : evaluate(r.job);
-      if (ev.match) hlTargets.push(card);
-      const old = card.querySelector(':scope > .tw-badge');
-      if (old && card.getAttribute('data-tw') === sig) return;     // already marked, unchanged (6.18: and the note is still there)
-      card.setAttribute('data-tw', sig);
-      if (old) { old.twOurs = true; old.remove(); }
-      const badge = document.createElement('div');
-      badge.className = 'tw-badge';
-      badge.style.cssText = 'font:700 13px ' + FONT + ';margin:0 0 6px 0;';
-      if (ev.match) {
-        const f = frameOf(card);
-        if (f !== card) card.style.outline = '';
-        f.style.outline = '2px solid ' + P.green; f.style.outlineOffset = '-1px'; card.style.opacity = '';
-        badge.style.color = P.green;
-        badge.textContent = STAR + ' MATCH' + (r.noSpots ? '  (no spots right now)' : '');
-      } else {
-        card.style.outline = ''; frameOf(card).style.outline = ''; card.style.opacity = '';   // not dimmed: you can still apply to any card
-        badge.style.color = P.red;   // 6.15: red like the box's why lines
-        badge.textContent = '✗ ' + ev.reasons.join(', ');
-      }
-      // 6.15: second line: Inbound / Outbound and the department, colored like the box
-      const ci = pi;
-      if (ci && (ci.dir || ci.deptName || ci.bl)) {
-        const line = document.createElement('div');
-        line.style.cssText = 'font-weight:600;margin-top:2px;';
-        const add = (t, c) => { if (!t) return; if (line.childNodes.length) line.appendChild(Object.assign(document.createElement('span'), { textContent: ' | ', style: 'color:' + P.gray })); const sp = document.createElement('span'); sp.textContent = t; sp.style.color = c; line.appendChild(sp); };
-        add(ci.dir, ci.dir === 'Outbound' ? P.green : P.orange);
-        if (ci.dir) add(ci.deptName ? 'dept: ' + ci.deptName : '', P.deptBlue);
-        else add((ci.deptName || ci.bl) + codeEnd(ci.code), P.deptBlue);
-        badge.appendChild(line);
-      }
-      card.insertBefore(badge, card.firstChild);
+    const ver = (jobsRaw ? jobsRaw.length : 0) + ':' + pageList.jobs.length + ':' + pageList.partial;
+    siteJobsNow();
+    let dirty = false;
+    const entries = [];
+    cards.forEach(card => {
+      const ob = card.querySelector('.tw-badge'), tc = ob ? (card.textContent || '').replace(ob.textContent, '') : (card.textContent || '');
+      let m = cardMemo.get(card);
+      if (!m || m.tc !== tc) {
+        const text = cardText(card), r = cardToJob(text);
+        m = { tc, text, r, job: r.job, idx: cardIndex(card), ver: '', badge: null, match: false };
+        cardMemo.set(card, m);
+      } else if (m.idx !== cardIndex(card)) m.idx = cardIndex(card);
+      if (!m.r.ok) return;
+      if (m.ver !== ver || !m.badge || !m.badge.isConnected) dirty = true;
+      entries.push(Object.assign({ card, m }, { text: m.text, r: m.r, job: m.job, idx: m.idx }));
     });
+    if (dirty) {
+      if (entries.every(e => e.idx != null)) entries.sort((a, b) => a.idx - b.idx);
+      else entries.forEach(e => { e.top = e.card.getBoundingClientRect().top; }), entries.sort((a, b) => a.top - b.top);
+      const plan = cardPlan(entries);
+      const P = pageColors();
+      entries.forEach(({ card, m, r }) => {
+        const px = plan.get(card), pi = px && px.i;
+        const sig = (pi ? pi.code : '') + ':' + P.red;
+        if (m.ver === ver && m.badge && m.badge.isConnected && m.sig === sig) return;   // nothing new for this card
+        m.ver = ver; m.sig = sig;
+        // 6.19: once the card's schedule is known, judge the schedule itself (the card's text has no end time)
+        const ev = px && Array.isArray(px.reasons) ? { match: !!px.match, reasons: px.reasons } : evaluate(r.job);
+        m.match = ev.match;
+        const host = frameOf(card);
+        if (host.style.position === '' && getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        if (m.badge) { m.badge.twOurs = true; m.badge.remove(); }
+        const old = host.querySelector(':scope > .tw-badge'); if (old) { old.twOurs = true; old.remove(); }
+        const badge = document.createElement('div');
+        badge.className = 'tw-badge';
+        badge.style.cssText = 'position:absolute;top:14px;right:18px;max-width:60%;text-align:right;pointer-events:none;z-index:1;font:700 13px/1.35 ' + FONT + ';';
+        if (ev.match) {
+          host.style.outline = '2px solid ' + P.green; host.style.outlineOffset = '-1px';
+          badge.style.color = P.green;
+          badge.textContent = STAR + ' MATCH' + (r.noSpots ? '  (no spots right now)' : '');
+        } else {
+          host.style.outline = '';   // not dimmed: you can still apply to any card
+          badge.style.color = P.red;   // 6.15: red like the box's why lines
+          badge.textContent = '✗ ' + ev.reasons.join(', ');
+        }
+        // 6.15: second line: Inbound / Outbound and the department, colored like the box
+        const ci = pi;
+        if (ci && (ci.dir || ci.deptName || ci.bl)) {
+          const line = document.createElement('div');
+          line.style.cssText = 'font-weight:600;margin-top:2px;';
+          const add = (t, c) => { if (!t) return; if (line.childNodes.length) line.appendChild(Object.assign(document.createElement('span'), { textContent: ' | ', style: 'color:' + P.gray })); const sp = document.createElement('span'); sp.textContent = t; sp.style.color = c; line.appendChild(sp); };
+          add(ci.dir, ci.dir === 'Outbound' ? P.green : P.orange);
+          if (ci.dir) add(ci.deptName ? 'dept: ' + ci.deptName : '', P.deptBlue);
+          else add((ci.deptName || ci.bl) + codeEnd(ci.code), P.deptBlue);
+          badge.appendChild(line);
+        }
+        host.appendChild(badge);
+        m.badge = badge;
+      });
+    }
+    hlTargets = entries.filter(e => e.m.match).map(e => e.card);
     // 6.18: the counter counts the whole site list from the last check, not the cards on screen right now
     // (the page swaps cards in and out as you scroll, so that number kept changing)
     const siteNow = SITES.find(x => location.search.includes(x.id));
-    const sl = siteNow ? (loadJSON('siteJobs', {})[siteNow.name] || []) : [];
+    const sl = siteNow ? (jobsVal[siteNow.name] || []) : [];
     // counter pill: "★ 2 matches  next ↓" (top right); click jumps to the next match
     if (!hlPill) {
       hlPill = document.createElement('div');
@@ -1137,8 +1165,10 @@
       document.body.appendChild(hlPill);
     }
     const total = sl.length || cards.length, nm = sl.length ? sl.filter(x => x.match).length : hlTargets.length;
-    hlPill.style.display = cards.length ? 'block' : 'none';
-    hlPill.style.borderColor = nm ? C.green : C.gray;
+    const disp = cards.length ? 'block' : 'none';
+    if (hlPill.style.display !== disp) hlPill.style.display = disp;
+    const bc = nm ? C.green : C.gray;
+    if (hlPill.dataset.bc !== bc) { hlPill.dataset.bc = bc; hlPill.style.borderColor = bc; }
     const pillText = nm
       ? STAR + ' ' + nm + ' match' + (nm > 1 ? 'es' : '') + ' of ' + total + (hlTargets.length ? '   next ↓' : '   (scroll to find)')
       : 'no matches (' + total + ' schedules)';
