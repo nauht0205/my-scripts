@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.11
+// @version      6.12
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.11';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.12';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -205,10 +205,16 @@
   const isFlex = j => j.scheduleClass === 'FLEXIBLE' || /^FLEX/.test(meta(j).type || '');
   // Inbound/Outbound from the schedule code ending (-IB / -OB). Any other ending is already visible in the
   // code itself, so nothing extra is added for it.
+  // 6.12: when the code has neither ending, the department name or business line decides, if it says
+  // inbound or outbound (never guessed from anything else)
   function dept(j) {
     const c = j.scheduleCode || '';
     if (/-OB$/i.test(c)) return 'Outbound';
     if (/-IB$/i.test(c)) return 'Inbound';
+    const other = (j.departmentName || '') + ' ' + (j.businessLine || '');
+    const ob = /outbound/i.test(other), ib = /inbound/i.test(other);
+    if (ob && !ib) return 'Outbound';
+    if (ib && !ob) return 'Inbound';
     return '';
   }
 
@@ -290,6 +296,9 @@
       dir: dept(j),
       activity,
       dept: j.departmentName && j.departmentName !== activity ? j.departmentName : '',
+      // 6.12: Amazon's own details, for the box (when there is no direction) and for copy
+      deptName: j.departmentName || '', bl: j.businessLine || '',
+      dirFrom: /-(OB|IB)$/i.test(j.scheduleCode || '') ? 'code' : dept(j) ? 'department' : '',
     };
   }
   // Pieces of one schedule, each tagged with what it is (the box colors them by tag; the phone alert joins
@@ -300,6 +309,8 @@
       { k: i.flex ? 'flex' : /^Part/.test(i.type) ? 'part' : /^Full/.test(i.type) ? 'full' : 'text', t: i.type },
       i.shift ? { k: 'text', t: i.shift, join: ' ' } : null,
       i.dir ? { k: i.dir === 'Outbound' ? 'out' : i.dir === 'Inbound' ? 'in' : 'text', t: i.dir } : null,
+      // 6.12: no Outbound / Inbound anywhere: show the department so you can judge it yourself
+      !i.dir && (i.deptName || i.bl) ? { k: 'extra', t: 'dept: ' + (i.deptName || i.bl) } : null,
       i.activity ? { k: 'act', t: i.activity } : null,
     ].filter(Boolean);
   }
@@ -539,6 +550,16 @@
       'status ' + JSON.stringify(loadJSON('status2', {})),
       '--- sites',
       SITES.map(x => '#' + x.rank + ' ' + x.name + (x.onlyFlex ? ' (flex only)' : '') + ': ' + JSON.stringify(stats[x.name] || null)).join('\n'),
+      '--- schedules whose code has no -OB / -IB (what Amazon sends) (6.12)',
+      (() => {
+        const all = loadJSON('siteJobs', {}), out = [];
+        SITES.forEach(x => (all[x.name] || []).forEach(j => {
+          if (!j.i || j.i.dirFrom === 'code') return;
+          out.push(x.name + ' ' + j.i.code + ' | department: ' + (j.i.deptName || j.i.dept || '?') + ' | business line: ' + (j.i.bl || '?') +
+            ' | activity: ' + (j.i.activity || '?') + ' | shown as: ' + (j.i.dir || 'nothing'));
+        }));
+        return out.join('\n') || 'none (or no check yet since updating)';
+      })(),
       '--- log',
       loadJSON('twLog', []).join('\n') || 'empty',
     ].join('\n');
