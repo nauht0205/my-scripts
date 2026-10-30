@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.8
+// @version      6.9
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or intercepts anything on the page (safe alongside the VTO scripts). Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.8';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.9';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -364,55 +364,65 @@
   }
 
   // ================= STATUS BOX =================
-  const C = {
-    bg: '#000000', border: '#2b2b2b',
-    text: '#ece8df',                       // off-white: all regular text, header bar, CHECKS title
-    green: '#50fa7b', red: '#ff5555', blue: '#4d9fff', pink: '#ff92df',
-    cyan: '#8be9fd', yellow: '#f6ff9c', orange: '#ffa94d', purple: '#bd93f9', gray: '#8a8a8a',
+  // 6.9: A to Z look like VTO Auto Accept 4.69: light (white box, navy text) or dark (the dark A to Z page).
+  // Its own Light / Dark button in the header (saved as twTheme, default light; not tied to the VTO box). Same color for the same thing as before;
+  // on white, each color is a deeper shade of it so it stays readable. Last / next check times are A to Z orange.
+  const THEMES = {
+    light: { bg: '#ffffff', border: '#d1d1d9', btnLine: '#cfd0d8', shadow: 'rgba(22,30,45,.18)', text: '#161e2d', onWarn: '#ffffff',
+      green: '#009d34', red: '#cc0c39', blue: '#1d5bd8', pink: '#c2187a', cyan: '#0a7f99', yellow: '#8a6d00', orange: '#c75a12',
+      purple: '#7a3fd1', gray: '#5c6471', azOrange: '#ef6c28' },
+    dark: { bg: '#15151d', border: '#3a3a45', btnLine: '#5a5a66', shadow: 'rgba(0,0,0,.5)', text: '#ffffff', onWarn: '#15151d',
+      green: '#50fa7b', red: '#ff5555', blue: '#4d9fff', pink: '#ff92df', cyan: '#8be9fd', yellow: '#f6ff9c', orange: '#ffa94d',
+      purple: '#bd93f9', gray: '#a3a3ae', azOrange: '#ff9f5a' },
   };
-  // schedule list colors, by piece tag (see headParts / detailParts)
-  const PART_COLOR = {
-    flex: C.blue, part: C.cyan, full: C.purple,   // type, in your priority order
-    out: C.green, in: C.orange,                    // Outbound / Inbound
-    act: C.yellow,                                 // shift activity
-    main: C.text, extra: C.gray,                   // days + times (bold) / shift length, hours per week
-    spotsOpen: C.green, text: C.text,
-  };
+  const C = {}, PART_COLOR = {};
+  let themeNow = '';
+  const wantTheme = () => GM_getValue('twTheme', 'light') === 'dark' ? 'dark' : 'light';
+  function applyTheme() {
+    themeNow = wantTheme();
+    Object.assign(C, THEMES[themeNow]);
+    // schedule list colors, by piece tag (see headParts / detailParts)
+    Object.assign(PART_COLOR, {
+      flex: C.blue, part: C.cyan, full: C.purple,   // type, in your priority order
+      out: C.green, in: C.orange,                    // Outbound / Inbound
+      act: C.yellow,                                 // shift activity
+      main: C.text, extra: C.gray,                   // days + times (bold) / shift length, hours per week
+      spotsOpen: C.green, text: C.text,
+    });
+  }
+  applyTheme();
   const STAR = '★';   // match mark in the box (green)
-  const FONT = 'Hack,Consolas,Menlo,monospace';
+  // 6.9: A to Z's own font: whatever the page itself uses (read from the page), Amazon Ember if that can't be read
+  const FONT = (() => { try { const f = getComputedStyle(document.body || document.documentElement).fontFamily; if (f && !/^\s*(serif|"?Times)/i.test(f)) return f; } catch (e) {} return '"Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif'; })();
   let box = null, headLabel = null, bodyEl = null, lastHtml = '', lastHead = '';
   let collapsed = !!GM_getValue('boxCollapsed', false);
 
   function setStatus(kind, text) { saveJSON('status2', { kind, text, t: Date.now() }); render(); }
   function setSite(name, data) { const s = loadJSON('siteStat', {}); s[name] = data; saveJSON('siteStat', s); render(); }
 
-  function loadFont() {
-    // Hack from a font CDN. If A to Z blocks it, the box falls back to Consolas (or uses Hack if it is installed on the PC).
-    try {
-      if (document.getElementById('tw-font')) return;
-      const l = document.createElement('link');
-      l.id = 'tw-font'; l.rel = 'stylesheet';
-      l.href = 'https://cdn.jsdelivr.net/npm/hack-font@3/build/web/hack.css';
-      (document.head || document.documentElement).appendChild(l);
-    } catch (e) {}
-  }
+  // 6.9: header buttons outlined like the VTO box (A to Z tiles)
   function mkBtn(label, fn) {
     const b = document.createElement('button');
     b.textContent = label;
-    b.style.cssText = 'background:transparent;color:#000;border:1px solid #000;border-radius:4px;font:12px ' + FONT + ';padding:1px 7px;cursor:pointer;';
+    b.style.cssText = 'background:' + C.bg + ';color:' + C.text + ';border:1px solid ' + C.btnLine + ';border-radius:6px;font:600 12px/1.5 ' + FONT + ';padding:2px 9px;cursor:pointer;';
+    b.addEventListener('mouseenter', () => { b.style.filter = 'brightness(0.94)'; });
+    b.addEventListener('mouseleave', () => { b.style.filter = ''; });
     b.addEventListener('click', e => { e.stopPropagation(); fn(); });
     return b;
   }
   function buildBox() {
     if (box || !IS_TOP || !document.body) return;
-    loadFont();
     box = document.createElement('div');
-    box.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483646;width:max-content;max-width:min(96vw,1100px);max-height:90vh;overflow:auto;background:' + C.bg + ';color:' + C.text + ';font:14px/1.6 ' + FONT + ';border:1px solid ' + C.border + ';border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.55);';
+    box.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483646;width:max-content;max-width:min(96vw,1100px);max-height:90vh;overflow:auto;background:' + C.bg + ';color:' + C.text + ';font:14px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C.border + ';border-radius:8px;box-shadow:0 2px 12px ' + C.shadow + ';';
     const head = document.createElement('div');
-    head.style.cssText = 'padding:7px 12px;font-weight:bold;display:flex;justify-content:space-between;align-items:center;gap:16px;color:#000;';
+    head.style.cssText = 'padding:8px 10px 8px 14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid ' + C.border + ';';
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:4px;align-items:center;';
+    const modeBtn = mkBtn(themeNow === 'dark' ? '☾ Dark' : '☀ Light', () => { GM_setValue('twTheme', themeNow === 'dark' ? 'light' : 'dark'); render(); });
+    modeBtn.title = 'switch the Transfer box between light and dark';
+    if (themeNow === 'dark') modeBtn.style.background = '#2c2c38';
+    btns.appendChild(modeBtn);
     btns.appendChild(mkBtn('check', checkNow));
     btns.appendChild(mkBtn('copy', () => copyText(report()).then(ok => setStatus(ok ? 'ok' : 'err', ok ? 'copied - paste it to Claude' : 'copy failed'))));
     btns.appendChild(mkBtn('test', () => {
@@ -430,7 +440,7 @@
     head.appendChild(headLabel);
     head.appendChild(btns);
     bodyEl = document.createElement('div');
-    bodyEl.style.cssText = 'padding:8px 12px 10px;white-space:pre;';
+    bodyEl.style.cssText = 'padding:8px 14px 10px;white-space:pre;';
     // click ▸ / site name: open that site's list (click again to close; only one open at a time)
     bodyEl.addEventListener('click', e => {
       // "open" / "copy" next to a site: open its schedule list in a NEW tab (never this VTO tab), or copy its link
@@ -460,11 +470,11 @@
     box.__head = head;
     document.body.appendChild(box);
     render();
-    setInterval(render, 15000);
+    if (!buildBox.timer) buildBox.timer = setInterval(render, 15000);   // 6.9: once, even when the box is rebuilt for Light / Dark
   }
 
   // small "open" / "copy" buttons at the end of a site row (handled by the click listener in buildBox)
-  const siteBtn = (act, name) => `<span data-act="${act}" data-name="${esc(name)}" style="margin-left:6px;padding:0 6px;border:1px solid ${C.gray};border-radius:4px;font-size:12px;cursor:pointer;color:${C.text}">${act}</span>`;
+  const siteBtn = (act, name) => `<span data-act="${act}" data-name="${esc(name)}" style="margin-left:6px;padding:0 8px;border:1px solid ${C.btnLine};border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;color:${C.text}">${act}</span>`;
   function copyText(t) {
     try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(() => true, () => fallbackCopy(t)); } catch (e) {}
     return Promise.resolve(fallbackCopy(t));
@@ -478,7 +488,8 @@
     } catch (e) { return false; }
   }
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  const cell = (t, w, color, bold) => `<span style="display:inline-block;${w ? 'width:' + w + 'ch;' : ''}color:${color || C.text}${bold ? ';font-weight:700' : ''}">${esc(t)}</span>`;
+  // 6.9: only fixed-width cells are blocks; the rest stay plain text so spaces around " | " are kept
+  const cell = (t, w, color, bold) => `<span style="${w ? 'display:inline-block;width:' + w + 'ch;' : ''}color:${color || C.text}${bold ? ';font-weight:700' : ''}">${esc(t)}</span>`;
   const flexText = (open, listed) => cell(open + '/' + listed + ' flex open', 0, open ? C.blue : C.text, open > 0);
 
   // The schedule list shown under a site when its ▸ is clicked. Built only from data already saved by the
@@ -522,17 +533,27 @@
 
   function render() {
     if (!box) return;
+    // 6.9: Light / Dark was switched (here or in another tab): rebuild in the other colors
+    if (wantTheme() !== themeNow) { applyTheme(); box.remove(); box = null; lastHtml = ''; lastHead = ''; buildBox(); return; }
     const st = loadJSON('status2', { kind: '', text: '' });
     const err = loadJSON('err', { fails: 0 });
     const running = GM_getValue('running', 0) > Date.now() - 3 * 60 * 1000;
-    let label = '', bg = C.text;
-    if (!employeeId) { label = 'OPEN TRANSFER PAGE ONCE'; bg = C.yellow; }
-    else if (running) { label = 'CHECKING…'; bg = C.text; }
-    else if (err.fails >= 2) { label = 'PROBLEM - CHECK SIGN-IN'; bg = C.orange; }
-    else if (err.fails === 1) { label = 'LAST CHECK FAILED'; bg = C.yellow; }
-    else if (inQuietWindow()) { label = 'PAUSED FOR VTO :59:30-:01:00'; bg = C.cyan; }
-    const headTxt = 'TRANSFER ' + VERSION + (label ? ' | ' + label : '');
-    if (headTxt + bg !== lastHead) { lastHead = headTxt + bg; headLabel.textContent = headTxt; box.__head.style.background = bg; }
+    // 6.9: like the VTO box: white header, status in orange; a full orange bar only when something needs you
+    let label = '', bar = false;
+    if (!employeeId) { label = 'OPEN TRANSFER PAGE ONCE'; bar = true; }
+    else if (running) label = 'Checking…';
+    else if (err.fails >= 2) { label = 'PROBLEM - CHECK SIGN-IN'; bar = true; }
+    else if (err.fails === 1) { label = 'LAST CHECK FAILED'; bar = true; }
+    else if (inQuietWindow()) label = 'Paused for VTO :59:30-:01:00';
+    const headTxt = 'Transfer ' + VERSION + '|' + label + '|' + bar;
+    if (headTxt !== lastHead) {
+      lastHead = headTxt;
+      const h = box.__head;
+      h.style.background = bar ? C.azOrange : C.bg;
+      h.style.borderBottomColor = bar ? C.azOrange : C.border;
+      h.style.color = bar ? C.onWarn : C.text;
+      headLabel.innerHTML = 'Transfer ' + esc(VERSION) + (label ? ` <span style="font-weight:400;${bar ? '' : 'color:' + C.gray}">|</span> <span style="${bar ? '' : 'color:' + C.azOrange}">${esc(label)}</span>` : '');
+    }
 
     bodyEl.style.display = collapsed ? 'none' : 'block';
     if (collapsed) return;
@@ -572,8 +593,8 @@
 
     const lastOk = GM_getValue('lastCheckAt', 0);
     const next = GM_getValue('nextDue', 0);
-    let foot = `<div style="border-top:1px solid ${C.border};margin-top:7px;padding-top:7px;color:${C.text};font-weight:700;font-size:12px;letter-spacing:.1em;">CHECKS</div>`;
-    foot += `<div>last ${cell(lastOk ? clock(lastOk) : '—', 0, C.pink)} | next ${cell(next > Date.now() ? clock(next) : 'soon', 0, C.pink)}</div>`;
+    let foot = `<div style="border-top:1px solid ${C.border};margin-top:8px;padding-top:8px;color:${C.text};font-weight:700;font-size:15px;">Checks</div>`;
+    foot += `<div>${cell('last ', 0, C.gray)}${cell(lastOk ? clock(lastOk) : '—', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('next ', 0, C.gray)}${cell(next > Date.now() ? clock(next) : 'soon', 0, C.azOrange)}</div>`;
     if (st.text && st.kind === 'err') foot += `<div>${cell('! ' + st.text, 0, C.orange)}</div>`;
     else if (st.text && st.kind === 'ok' && Date.now() - st.t < 60000) foot += `<div>${cell(st.text, 0, C.text)}</div>`;
 
@@ -838,7 +859,7 @@
       const old = card.querySelector(':scope > .tw-badge'); if (old) old.remove();
       const badge = document.createElement('div');
       badge.className = 'tw-badge';
-      badge.style.cssText = 'font:700 13px ' + FONT + ';margin:0 0 6px 0;letter-spacing:.03em;';
+      badge.style.cssText = 'font:700 13px ' + FONT + ';margin:0 0 6px 0;';
       if (ev.match) {
         card.style.outline = '2px solid ' + C.green; card.style.outlineOffset = '-2px'; card.style.opacity = '';
         badge.style.color = C.green;
@@ -853,7 +874,7 @@
     // counter pill: "★ 2 matches  next ↓" (top right); click jumps to the next match
     if (!hlPill) {
       hlPill = document.createElement('div');
-      hlPill.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483646;background:#000;color:' + C.text + ';font:700 14px ' + FONT + ';border:1px solid ' + C.green + ';border-radius:8px;padding:6px 12px;cursor:pointer;box-shadow:0 4px 16px rgba(0,0,0,.5);';
+      hlPill.style.cssText = 'position:fixed;top:12px;right:12px;z-index:2147483646;background:' + C.bg + ';color:' + C.text + ';font:700 14px ' + FONT + ';border:1px solid ' + C.green + ';border-radius:8px;padding:6px 12px;cursor:pointer;box-shadow:0 2px 12px ' + C.shadow + ';';
       hlPill.addEventListener('click', () => {
         if (!hlTargets.length) return;
         hlIndex = hlIndex % hlTargets.length;
