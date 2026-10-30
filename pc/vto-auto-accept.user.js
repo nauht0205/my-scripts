@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.69
+// @version      4.70
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @description  (PC) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -254,7 +254,10 @@
   // Critical Alert and Priority on one line, "auto signed-in (3s)".
   // 4.69 (Martin, 10/30): Dark mode like the dark A to Z page (Mode: button after Priority, saved in vtoTheme, default light);
   //   softer orange on dark; a missed VTO's card is gray with "VTO Filled" like the VTO page (log and counts stay red).
-  const VERSION = '4.69';
+  // 4.70 (Martin, 10/30): Critical Alert / Priority / Mode switches show no note (the box no longer stretches for a second);
+  //   the other short notes (copied, test sent...) float under the header so the width never changes. Copy also lists
+  //   Critical Alert, mode and the page's font.
+  const VERSION = '4.70';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1644,6 +1647,8 @@
       'tab ' + document.visibilityState,
       'list request: ' + templateSrc,
       'priority: ' + (nightFirst() ? 'Night Shift (night shift VTOs first, then soonest)' : 'Normal (soonest first)'),
+      'Critical Alert: ' + (ls.get('vtoAlarmMuted', false) ? 'Off (silent only)' : 'On') + ' | mode: ' + (darkMode() ? 'Dark' : 'Light'),
+      'page font: ' + (function () { try { return getComputedStyle(document.body).fontFamily; } catch (e) { return '?'; } })() + ' | box font: ' + FONT,
       'timers ' + timerMode,
       'list ' + listCount + ' open ' + openCount + ' checks ' + checks,
       'last error: ' + lastError,
@@ -1670,8 +1675,9 @@
   }
   function flash(msg) {
     if (!flashEl) return;
-    flashEl.textContent = msg;
-    setTimeout(function () { if (flashEl) flashEl.textContent = ''; }, 1500);
+    flashEl.textContent = msg; flashEl.style.display = 'block';
+    clearTimeout(flash.__t);
+    flash.__t = setTimeout(function () { if (flashEl) { flashEl.textContent = ''; flashEl.style.display = 'none'; } }, 1500);
   }
   // 4.26: solid buttons (box purple, white text), lighter on hover, pressed down a little on click
   // 4.68: header buttons outlined like the A to Z tiles; a button with its own color (in a line) is a pill
@@ -1746,8 +1752,9 @@
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:5px;align-items:center;';
     flashEl = document.createElement('span');
-    flashEl.style.cssText = 'font-size:11px;';
-    btns.appendChild(flashEl);
+    // 4.70: floats just under the header, so a note never makes the box wider
+    flashEl.style.cssText = 'display:none;position:absolute;top:100%;right:10px;margin-top:4px;z-index:1;font:600 11px/1.6 ' + FONT + ';color:' + C_BG + ';background:' + C_BASE + ';border-radius:6px;padding:1px 8px;white-space:pre;pointer-events:none;';
+    head.appendChild(flashEl);
     // 4.44: "log out" sits in the header (two clicks within 5 s); Critical Alert moved to the line where log out was
     btns.appendChild(mkBtn('log out', logOut));   // 4.60: white with blue words like the other header buttons
     // 4.36: "test" asks VTO Phone Alerts to send a test alert to your phone (it holds the Pushover keys). Not near :00.
@@ -2040,7 +2047,6 @@
   function toggleAlarm() {
     const muted = !ls.get('vtoAlarmMuted', false);
     ls.set('vtoAlarmMuted', muted);
-    flash(muted ? 'alarm muted - silent only' : 'alarm back on');
     render();
   }
   function pkBoxLines() {
@@ -2054,7 +2060,6 @@
   function togglePriority() {
     const night = !nightFirst();
     ls.set('vtoPriority', night ? 'night' : 'normal');
-    flash(night ? 'priority: night shift first' : 'priority: soonest first');
     render();
   }
 
