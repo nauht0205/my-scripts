@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.71
+// @version      4.72
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -258,7 +258,13 @@
   // 4.71 (Martin, 10/30): the box uses Amazon Ember, the A to Z app's font (flat-top 3). The font comes from the private
   //   Script Shelf copy once (like the Pushover keys) and is kept in this site's storage; the public GitHub copy has no font.
   //   Only the box uses it. Copy shows whether it loaded.
-  const VERSION = '4.71';
+  // 4.72 (Martin, 10/31): narrow box + side rail. The box keeps the header (copy and fold only), checks, signed in, recent
+  //   (icon counts) and VTO events. A separate rail on its left has Errors, Log, Sessions and Settings; a click opens that
+  //   card beside the rail like a binder tab (close with the x, the same icon, or Esc; the open card is remembered).
+  //   Errors and Log show a bubble with the number of amber/red lines still showing in that card (red if any is red).
+  //   Settings card: Critical Alert, Priority (Normal = white with orange words), Mode, log out, test alert, clear log.
+  //   Error lines are amber (was orange). Nothing about checking or accepting changed.
+  const VERSION = '4.72';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1623,10 +1629,10 @@
   }
 
   /* ================= STATUS BOX ================= */
-  let box = null, headLabel = null, bodyEl = null, flashEl = null;
+  let box = null, headLabel = null, bodyEl = null, flashEl = null, dock = null, railEl = null, cardEl = null;   // 4.72: dock = box + rail + card
   // 4.30: some text inside the box is selected
   function selInBox() {
-    try { const sel = window.getSelection(); return !!(box && sel && !sel.isCollapsed && sel.rangeCount && (box.contains(sel.anchorNode) || box.contains(sel.focusNode))); } catch (e) { return false; }
+    try { const sel = window.getSelection(); return !!(dock && sel && !sel.isCollapsed && sel.rangeCount && (dock.contains(sel.anchorNode) || dock.contains(sel.focusNode))); } catch (e) { return false; }
   }
   // a click outside the box clears a box selection (the page may block that itself); a selection never holds the box for more than 2 min
   let selSince = 0;
@@ -1637,7 +1643,7 @@
     try { window.getSelection().removeAllRanges(); } catch (e) {}
     selSince = 0; return false;
   }
-  document.addEventListener('mousedown', function (e) { try { if (box && !box.contains(e.target) && selInBox()) window.getSelection().removeAllRanges(); } catch (err) {} }, true);
+  document.addEventListener('mousedown', function (e) { try { if (dock && !dock.contains(e.target) && selInBox()) window.getSelection().removeAllRanges(); } catch (err) {} }, true);
   let boxKey = '', liveEl = null;   // 4.26: redraw the box only when something in it changed
   let collapsed = ls.get('vtoBoxCollapsed', false);
 
@@ -1736,47 +1742,117 @@
       (document.head || document.documentElement).appendChild(l);
     } catch (e) {}
   }
+  // 4.72: small SVG icons built element by element (no innerHTML)
+  function mkSvg(vb, size, items) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', vb); svg.setAttribute('width', size); svg.setAttribute('height', size); svg.style.display = 'block';
+    items.forEach(function (it) {
+      const el = document.createElementNS(NS, it[0]);
+      Object.keys(it[1]).forEach(function (k) { el.setAttribute(k, it[1][k]); });
+      svg.appendChild(el);
+    });
+    return svg;
+  }
+  const RAIL_ICONS = {
+    err: function () { return mkSvg('0 0 24 24', 16, [['path', { d: 'M12 3 2 20h20L12 3z', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.2', 'stroke-linejoin': 'round' }], ['path', { d: 'M12 10v4M12 17h.01', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.2', 'stroke-linecap': 'round' }]]); },
+    log: function () { return mkSvg('0 0 24 24', 16, [['path', { d: 'M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.2', 'stroke-linecap': 'round' }]]); },
+    ses: function () { return mkSvg('0 0 24 24', 16, [['path', { d: 'M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }], ['path', { d: 'M10 17l5-5-5-5M15 12H3', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }]]); },
+    set: function () { return mkSvg('0 0 24 24', 16, [['path', { d: 'M19.4 13a7.5 7.5 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3h-4l-.4 2.9a7.6 7.6 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.5 7.5 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.6 7.6 0 0 0 1.7 1L11 21h4l.4-2.9a7.6 7.6 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5A3.5 3.5 0 1 1 13 8.5a3.5 3.5 0 0 1 0 7z', fill: 'currentColor' }]]); }
+  };
+  const CARD_NAMES = { err: 'Errors', log: 'Log', ses: 'Sessions', set: 'Settings' };
+  let openCard = ls.get('vtoCardOpen', null);   // 4.72: the open card stays open after a refresh
+  if (!CARD_NAMES[openCard]) openCard = null;
+  let railKey = '';
+  function setCard(k) {
+    openCard = (k && CARD_NAMES[k] && openCard !== k) ? k : null;
+    ls.set('vtoCardOpen', openCard);
+    railKey = ''; render();
+  }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && openCard && dock) setCard(null); });
   function buildBox() {
     if (box || !document.body) return;
+    // 4.72: the dock holds the rail (with its card) and the box side by side, bottom right
+    dock = document.createElement('div');
+    dock.id = 'vto-box';
+    dock.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;display:flex;align-items:flex-end;gap:6px;max-width:96vw;pointer-events:none;' +
+      '--vbg:' + C_BG + ';--vfg:' + C_BASE + ';--vmut:' + C_TIME + ';--vline:' + C_LINE + ';--vrmut:' + C_RAIL_MUT + ';--vamb:' + C_AMB + ';--vmiss:' + C_MISS + ';--vshadow:' + C_SHADOW + ';';
+    ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'selectstart', 'copy'].forEach(function (n) { dock.addEventListener(n, function (e) { e.stopPropagation(); }); });
+    const css = document.createElement('style');   // also when the page turns text selection off for everything
+    css.textContent = '#vto-box, #vto-box * { -webkit-user-select: text !important; user-select: text !important; box-sizing: content-box; }' +
+      '#vto-box .vto-binder{display:flex;align-items:stretch;pointer-events:auto;}' +
+      '#vto-box .vto-card{width:260px;max-height:62vh;display:flex;flex-direction:column;background:var(--vbg);color:var(--vfg);border:1px solid var(--vline);border-right:0;border-radius:10px 0 0 10px;box-shadow:-2px 2px 10px var(--vshadow);position:relative;z-index:2;font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;}' +
+      '#vto-box .vto-card[hidden]{display:none !important;}' +
+      '#vto-box .vto-fh{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:14px;padding:9px 12px 2px;}' +
+      '#vto-box .vto-x{border:0;background:none;padding:0;width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--vmut);font:400 20px/1 Arial,sans-serif;}' +
+      '#vto-box .vto-x:hover{background:var(--vline);color:var(--vfg);}' +
+      '#vto-box .vto-fb{flex:1;overflow:auto;padding:6px 12px 10px;}' +
+      '#vto-box .vto-rail{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 6px;background:var(--vbg);color:var(--vmut);border:1px solid var(--vline);border-radius:10px;box-shadow:0 2px 10px var(--vshadow);}' +
+      '#vto-box .vto-binder.open .vto-rail{background:var(--vrmut);border-left:0;border-radius:0 10px 10px 0;}' +
+      '#vto-box .vto-ri{position:relative;width:34px;height:34px;border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--vmut);box-sizing:border-box;}' +
+      '#vto-box .vto-ri:hover{color:var(--vfg);}' +
+      '#vto-box .vto-ri svg{transition:transform .12s;}' +
+      '#vto-box .vto-binder.open .vto-ri:not(.on) svg{opacity:.4;}' +
+      '#vto-box .vto-binder.open .vto-ri.on{background:var(--vbg);color:var(--vfg);width:44px;height:40px;margin-left:-10px;padding-left:2px;border-radius:0 10px 10px 0;z-index:3;}' +
+      '#vto-box .vto-binder.open .vto-ri.on svg{transform:scale(1.25);}' +
+      '#vto-box .vto-tb{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;border-radius:999px;color:#fff;font:700 10px/15px Arial,sans-serif;text-align:center;padding:0 3px;box-sizing:border-box;}' +
+      '#vto-box .vto-sep{width:20px;height:1px;background:var(--vline);margin:1px 0;}' +
+      '#vto-box .vto-srow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:5px 0;}' +
+      '#vto-box .vto-empty{color:var(--vmut);}';
+    dock.appendChild(css);
+    // rail + card ("binder"): the card comes out of the rail to the left
+    const binder = document.createElement('div');
+    binder.className = 'vto-binder';
+    cardEl = document.createElement('div');
+    cardEl.className = 'vto-card'; cardEl.hidden = true;
+    railEl = document.createElement('div');
+    railEl.className = 'vto-rail';
+    railEl.__items = {};
+    ['err', 'log', 'ses', '-', 'set'].forEach(function (k) {
+      if (k === '-') { const sp = document.createElement('span'); sp.className = 'vto-sep'; railEl.appendChild(sp); return; }
+      const it = document.createElement('span');
+      it.className = 'vto-ri'; it.title = CARD_NAMES[k];
+      try { it.appendChild(RAIL_ICONS[k]()); } catch (e) { it.textContent = CARD_NAMES[k][0]; }
+      const tb = document.createElement('span'); tb.className = 'vto-tb'; tb.style.display = 'none'; it.appendChild(tb); it.__tb = tb;
+      it.addEventListener('click', function () { setCard(k); });
+      railEl.__items[k] = it; railEl.appendChild(it);
+    });
+    binder.appendChild(cardEl); binder.appendChild(railEl);
+    dock.appendChild(binder); dock.__binder = binder;
     box = document.createElement('div');
-    // 4.26: as wide as its longest fixed line (header, status lines, In-N-Out); long lines wrap; scrolls up and down
-    box.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:' + C_BG + ';color:' + C_BASE + ';font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C_LINE + ';border-radius:8px;box-shadow:0 2px 12px ' + C_SHADOW + ';user-select:text;-webkit-user-select:text;cursor:auto;';
-    // 4.30: you can select and copy any box text (Cmd+C); mouse, selection and copy events stay in the box, not the page
-    ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'selectstart', 'copy'].forEach(function (n) { box.addEventListener(n, function (e) { e.stopPropagation(); }); });
-    box.id = 'vto-box';
-    const selCss = document.createElement('style');   // also when the page turns text selection off for everything
-    selCss.textContent = '#vto-box, #vto-box * { -webkit-user-select: text !important; user-select: text !important; }';
-    box.appendChild(selCss);
+    // 4.26: as wide as its longest fixed line; long lines wrap; scrolls up and down
+    box.style.cssText = 'position:relative;pointer-events:auto;width:max-content;max-width:calc(96vw - 60px);max-height:70vh;overflow-y:auto;overflow-x:hidden;background:' + C_BG + ';color:' + C_BASE + ';font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C_LINE + ';border-radius:8px;box-shadow:0 2px 12px ' + C_SHADOW + ';cursor:auto;box-sizing:border-box;';
+    box.id = 'vto-main';
     const head = document.createElement('div');
-    head.style.cssText = 'position:sticky;top:0;padding:8px 10px 8px 14px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:14px;white-space:pre;background:' + C_BG + ';border-bottom:1px solid ' + C_LINE + ';';
+    head.style.cssText = 'position:sticky;top:0;padding:8px 8px 8px 12px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;white-space:pre;background:' + C_BG + ';border-bottom:1px solid ' + C_LINE + ';';
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
-    btns.style.cssText = 'display:flex;gap:5px;align-items:center;';
+    btns.style.cssText = 'display:flex;gap:4px;align-items:center;';
     flashEl = document.createElement('span');
     // 4.70: floats just under the header, so a note never makes the box wider
     flashEl.style.cssText = 'display:none;position:absolute;top:100%;right:10px;margin-top:4px;z-index:1;font:600 11px/1.6 ' + FONT + ';color:' + C_BG + ';background:' + C_BASE + ';border-radius:6px;padding:1px 8px;white-space:pre;pointer-events:none;';
     head.appendChild(flashEl);
-    // 4.44: "log out" sits in the header (two clicks within 5 s); Critical Alert moved to the line where log out was
-    btns.appendChild(mkBtn('log out', logOut));   // 4.60: white with blue words like the other header buttons
-    // 4.36: "test" asks VTO Phone Alerts to send a test alert to your phone (it holds the Pushover keys). Not near :00.
-    btns.appendChild(mkBtn('test', function () {
-      if (nearDrop()) { flash('near :00 - try after :01'); return; }
-      ls.set('vtoTestAlertAt', Date.now()); flash('test sent');
-    }));
+    // 4.72: only copy and fold here; log out, test alert and clear log are in the Settings card
     btns.appendChild(mkBtn('copy', function () { copyText(diag()); }));
-    btns.appendChild(mkBtn('clear', function () { ls.set('vtoLog', []); ls.set('vtoReloads', []); ls.set('vtoBoxClearedAt', Date.now()); flash('cleared'); }));   // everything stays in copy
     foldBtn = mkBtn('', function () { collapsed = !collapsed; ls.set('vtoBoxCollapsed', collapsed); setFoldIcon(); render(); });
     setFoldIcon();
     btns.appendChild(foldBtn);
     head.appendChild(headLabel);
     head.appendChild(btns);
     bodyEl = document.createElement('div');
-    bodyEl.style.cssText = 'padding:8px 14px 10px;';
+    bodyEl.style.cssText = 'padding:8px 12px 10px;';
     box.appendChild(head);
     box.appendChild(bodyEl);
     box.__head = head;
-    document.body.appendChild(box);
+    dock.appendChild(box);
+    railKey = '';
+    document.body.appendChild(dock);
   }
+  function testAlert() {
+    if (nearDrop()) { flash('near :00 - try after :01'); return; }
+    ls.set('vtoTestAlertAt', Date.now()); flash('test sent');
+  }
+  function clearLog() { ls.set('vtoLog', []); ls.set('vtoReloads', []); ls.set('vtoBoxClearedAt', Date.now()); flash('cleared'); railKey = ''; render(); }   // everything stays in copy
 
   /* ================= LOG COLORS ================= */
   // text colors: Dracula's bright set (from Martin's picture); background: the darker purple Martin preferred
@@ -1822,16 +1898,16 @@
   let C_RED = '#cc0c39';      // red: [Passkey] (Amazon asked for your passkey)
   let C_TAG = '#161e2d';      // white: In-N-Out reasons that are not a problem ([SelfClosed], [ShutDown]...)
   // 4.69: box colors for each mode (light = 4.68 A to Z look, dark = the dark A to Z page). applyTheme() sets the C_ colors.
-  let C_BG, C_SHADOW, C_BTN_LINE, C_OK_LINE, C_FILL_BG, C_FILL_LINE, C_FILL_TXT, C_BAR_OK, C_ON_WARN, C_ALERT_ON;
+  let C_BG, C_SHADOW, C_BTN_LINE, C_OK_LINE, C_FILL_BG, C_FILL_LINE, C_FILL_TXT, C_BAR_OK, C_ON_WARN, C_ALERT_ON, C_AMB, C_RAIL_MUT;   // 4.72: C_AMB = error lines (amber), C_RAIL_MUT = rail while a card is open
   const THEMES = {
     light: { ACCEPT: '#009d34', ACCEPT_BG: '#d5f8de', BASE: '#161e2d', TIME: '#5c6471', LINE: '#d1d1d9', YEL: '#8a6d00', SECT: '#161e2d',
       MISS: '#cc0c39', MISS_BG: '#fdecef', PURPLE: '#ef6c28', MINT: '#1d5bd8', BAD: '#cc0c39', WARN: '#ef6c28', CYAN: '#1d5bd8', RED: '#cc0c39', TAG: '#161e2d',
       BG: '#ffffff', SHADOW: 'rgba(22,30,45,.18)', BTN_LINE: '#cfd0d8', OK_LINE: '#2fbf5b', FILL_BG: '#e2e5e9', FILL_LINE: '#b6bac2', FILL_TXT: '#3f4653',
-      BAR_OK: '#009d34', ON_WARN: '#ffffff', ALERT_ON: '#00762a' },
+      BAR_OK: '#009d34', ON_WARN: '#ffffff', ALERT_ON: '#00762a', AMB: '#f2a900', RAIL_MUT: '#eceef2' },
     dark: { ACCEPT: '#4cc86a', ACCEPT_BG: '#023a17', BASE: '#ffffff', TIME: '#a3a3ae', LINE: '#3a3a45', YEL: '#e0b400', SECT: '#ffffff',
       MISS: '#ff5c77', MISS_BG: '#3d0b17', PURPLE: '#ff9f5a', MINT: '#6aa5ff', BAD: '#ff5c77', WARN: '#ff9f5a', CYAN: '#6aa5ff', RED: '#ff5c77', TAG: '#ffffff',
       BG: '#15151d', SHADOW: 'rgba(0,0,0,.5)', BTN_LINE: '#5a5a66', OK_LINE: '#4cc86a', FILL_BG: '#2e2f38', FILL_LINE: '#565763', FILL_TXT: '#d0d1d8',
-      BAR_OK: '#0b8a35', ON_WARN: '#15151d', ALERT_ON: '#4cc86a' }
+      BAR_OK: '#0b8a35', ON_WARN: '#15151d', ALERT_ON: '#4cc86a', AMB: '#ffb52e', RAIL_MUT: '#24252e' }
   };
   function darkMode() { return ls.get('vtoTheme', 'light') === 'dark'; }
   function applyTheme() {
@@ -1839,24 +1915,24 @@
     C_ACCEPT = T.ACCEPT; C_ACCEPT_BG = T.ACCEPT_BG; C_BASE = T.BASE; C_TIME = T.TIME; C_LINE = T.LINE; C_YEL = T.YEL; C_SECT = T.SECT;
     C_MISS = T.MISS; C_MISS_BG = T.MISS_BG; C_PURPLE = T.PURPLE; C_MINT = T.MINT; C_BAD = T.BAD; C_WARN = T.WARN; C_CYAN = T.CYAN; C_RED = T.RED; C_TAG = T.TAG;
     C_BG = T.BG; C_SHADOW = T.SHADOW; C_BTN_LINE = T.BTN_LINE; C_OK_LINE = T.OK_LINE; C_FILL_BG = T.FILL_BG; C_FILL_LINE = T.FILL_LINE; C_FILL_TXT = T.FILL_TXT;
-    C_BAR_OK = T.BAR_OK; C_ON_WARN = T.ON_WARN; C_ALERT_ON = T.ALERT_ON;
+    C_BAR_OK = T.BAR_OK; C_ON_WARN = T.ON_WARN; C_ALERT_ON = T.ALERT_ON; C_AMB = T.AMB; C_RAIL_MUT = T.RAIL_MUT;
   }
   applyTheme();
   function toggleTheme() {
     ls.set('vtoTheme', darkMode() ? 'light' : 'dark');
     applyTheme();
-    if (box) { box.remove(); box = null; }   // rebuilt in the new colors on the next render
-    boxKey = ''; liveEl = null;
+    if (dock) { dock.remove(); dock = null; box = null; }   // rebuilt in the new colors on the next render
+    boxKey = ''; liveEl = null; railKey = '';
     render();
   }
   // log line colors: accepted = green; signed out, delays, errors = orange; missed = pink; everything else white
   function lineColor(t) {
-    if (t.indexOf('SIGNED OUT') > -1 || t.indexOf('not logged in') > -1) return C_WARN;   // 4.20: orange
+    if (t.indexOf('SIGNED OUT') > -1 || t.indexOf('not logged in') > -1) return C_AMB;   // 4.72: amber (was orange)
     if (t.indexOf('check gap') > -1 || t.indexOf('fallback:') > -1 || t.indexOf('HIDDEN') > -1 || t.indexOf('DELAYED') > -1 ||
-        t.indexOf('was asleep') > -1 || t.indexOf('no internet') > -1 || t.indexOf('internet back') > -1) return C_WARN;
+        t.indexOf('was asleep') > -1 || t.indexOf('no internet') > -1 || t.indexOf('internet back') > -1) return C_AMB;
     if (t.indexOf('OK ACCEPTED') > -1) return C_ACCEPT;
     if (t.indexOf('MISSED') > -1 || t.indexOf('NOT ACCEPTED') > -1 || /\bfull\b/i.test(t) || /\sX\s/.test(t)) return C_MISS;   // 4.60: red (missed / full)
-    if (t.indexOf('!!') > -1 || /error|failed|rejected/i.test(t)) return C_WARN;   // 4.26: anything error related is orange (was pink)
+    if (t.indexOf('!!') > -1 || /error|failed|rejected/i.test(t)) return C_AMB;   // 4.72: anything error related is amber
     return null;
   }
   // anything about an actual sign-out is fully red
@@ -1876,7 +1952,7 @@
     const len = ((b - a) % 1440 + 1440) % 1440;
     const lo = function (h, mi, ap) { return +h + ':' + mi + ap.toLowerCase(); };
     return { day: m[1] + ', ' + MON_NAMES[+m[2] - 1] + ' ' + (+m[3]), key: +m[2] * 100 + +m[3], start: a,
-      time: lo(m[4], m[5], m[6]) + ' - ' + lo(m[7], m[8], m[9]), len: Math.floor(len / 60) + 'hrs ' + (len % 60) + 'mins' };
+      time: lo(m[4], m[5], m[6]) + ' - ' + lo(m[7], m[8], m[9]), len: Math.floor(len / 60) + 'hrs' + (len % 60 ? ' ' + (len % 60) + 'mins' : '') };
   }
   function vtoCardLines(res) {
     const nowMon = new Date().getMonth() + 1;
@@ -1892,9 +1968,9 @@
       const day = x.p ? x.p.day : '';
       if (day !== lastDay) { if (day) out.push({ dayHead: day }); lastDay = day; }
       const d = new Date(x.r.t);
-      const when = d.toLocaleDateString([], { weekday: 'short' }) + ' ' + (d.getMonth() + 1) + '/' + d.getDate() + ', ' + tShort(x.r.t);
+      const when = (d.getMonth() + 1) + '/' + d.getDate() + ' ' + tShort(x.r.t);   // 4.72: "10/30 4:35 PM | 5.8s"
       out.push({ card: { ok: x.r.kind === 'ok', time: x.p ? x.p.time : String(x.r.vto || 'VTO'), len: x.p ? x.p.len : '',
-        when: when + (x.r.kind === 'ok' && x.r.secs !== null && x.r.secs !== undefined ? ' · ' + x.r.secs + 's' : '') } });
+        when: when + (x.r.kind === 'ok' && x.r.secs !== null && x.r.secs !== undefined ? ' | ' + x.r.secs + 's' : '') } });
     });
     return out;
   }
@@ -1921,7 +1997,7 @@
         ic.appendChild(svg);
       } catch (e) { ic.textContent = '⊘'; }
     }
-    const st = document.createElement('span'); st.textContent = c.ok ? 'VTO Accepted' : 'VTO Filled'; st.style.cssText = 'font-weight:600;color:' + (c.ok ? C_ACCEPT : C_FILL_TXT) + ';';
+    const st = document.createElement('span'); st.textContent = c.ok ? 'Accepted' : 'VTO Filled'; st.style.cssText = 'font-weight:600;color:' + (c.ok ? C_ACCEPT : C_FILL_TXT) + ';';
     const w = document.createElement('span'); w.textContent = ' ' + c.when; w.style.color = C_TIME;
     l2.appendChild(ic); l2.appendChild(st); l2.appendChild(w);
     d.appendChild(l1); d.appendChild(l2);
@@ -1941,6 +2017,7 @@
       return d;
     }
     if (item && item.card) return vtoCard(item.card);
+    if (item && item.recent) return recentLine(item.recent);
     // 4.26: fixed lines (status, In-N-Out) never wrap and set the box width; all other lines wrap inside that
     // width (width 0 + min-width 100% keeps a long line from widening the box). Indented lines wrap under their text.
     const fix = !!(item && item.fix);
@@ -2013,53 +2090,54 @@
       headLabel.appendChild(bar); headLabel.appendChild(st);
     }
     bodyEl.style.display = collapsed ? 'none' : 'block';
+    dock.__binder.style.display = collapsed ? 'none' : 'flex';   // 4.72: the rail folds away with the box
     if (collapsed) { boxKey = ''; return; }
     if (holdForSel()) return;   // 4.30: you are selecting box text: no body redraw until the selection is cleared
 
     const s = stats();
     const L = [];
     // 4.26: this line changes every check, so only its text is updated (the rest of the box is redrawn only when it changes)
-    L.push({ live: true, fix: true, t: 'checks: ' + (template ? age.toFixed(1) + 's ago | ' + checks + ' this load' : 'none yet') + ' | list ' + listCount + ' | open ' + openCount });
+    L.push({ live: true, fix: true, parts: [{ t: 'checks ', c: C_TIME }, { t: (template ? age.toFixed(1) + 's ago' : 'none yet') + ' | list ' + listCount + ' | open ' + openCount }] });   // 4.72: load count is in copy
     if (inBoost()) L.push({ t: inBurst() ? 'EXTRA FAST (:00 drop)' : 'FAST (:00 drop window)', c: C_ACCEPT });   // 4.47: own line, green
-    if (!DIRECT_ACCEPT) L.push({ t: '!! mode: clicking only (direct accept off)', c: C_WARN });   // 4.26: shown only when not normal
-    if (timerMode !== 'worker') L.push({ t: '!! timers: normal (slow if tab hidden)', c: C_WARN });
+    if (!DIRECT_ACCEPT) L.push({ t: '!! mode: clicking only (direct accept off)', c: C_AMB });   // 4.26: shown only when not normal
+    if (timerMode !== 'worker') L.push({ t: '!! timers: normal (slow if tab hidden)', c: C_AMB });
     const sv = stayGet();
-    if (sv) L.push({ fix: true, parts: [{ t: 'signed in: ', c: C_TIME }, { t: dur(Date.now() - sv.since) + ' ago | session reset at ~' + new Date(sv.since + 36000000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }] });   // 4.68: gray label   // 4.51: Amazon's 10 h limit   // 4.46: just this, on its own line (stay-click counts are kept in copy only)
-    pkBoxLines().forEach(function (x) { L.push(x); });
+    if (sv) L.push({ fix: true, parts: [{ t: 'signed in ', c: C_TIME }, { t: dur(Date.now() - sv.since) + ' ago | reset ~' + new Date(sv.since + 36000000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }] });   // 4.72   // 4.68: gray label   // 4.51: Amazon's 10 h limit   // 4.46: just this, on its own line (stay-click counts are kept in copy only)
     const dayAgo = Date.now() - 86400000;   // 4.67: the last 24 h, not since midnight
     const res24 = ls.get('vtoResults', []).filter(function (x) { return x.t > dayAgo; });
     const nOk = res24.filter(function (x) { return x.kind === 'ok'; }).length, nMiss = res24.filter(function (x) { return x.kind === 'missed'; }).length;
     const nErr = ls.get('vtoErrors', []).filter(function (x) { return x.t > dayAgo; }).length;
-    L.push({ fix: true, parts: [{ t: 'recent: ', c: C_TIME }, { t: 'accepted ' + nOk, c: C_ACCEPT }, { t: ' | ' }, { t: 'missed ' + nMiss, c: C_MISS }, { t: ' | ' }, { t: 'errors ' + nErr, c: C_WARN }] });
-    if (!signedOutFlag && template && age > 8) L.push({ t: '!! CHECKS DELAYED - last good check ' + Math.round(age) + 's ago', c: C_WARN });
-    if (document.visibilityState === 'hidden' && timerMode !== 'worker') L.push({ t: '!! TAB HIDDEN - checks may slow down', c: C_WARN });
-    if (lastError && age > 3) L.push({ t: 'check problem: ' + lastError, c: C_WARN });   // 4.20: orange
+    L.push({ fix: true, recent: [nOk, nMiss, nErr] });   // 4.72: icon counts (green check, gray x, amber warning)
+    if (!signedOutFlag && template && age > 8) L.push({ t: '!! CHECKS DELAYED - last good check ' + Math.round(age) + 's ago', c: C_AMB });
+    if (document.visibilityState === 'hidden' && timerMode !== 'worker') L.push({ t: '!! TAB HIDDEN - checks may slow down', c: C_AMB });
+    if (lastError && age > 3) L.push({ t: 'check problem: ' + lastError, c: C_AMB });   // 4.72: amber
     const clearedAt = ls.get('vtoBoxClearedAt', 0);
     const errResetAt = ls.get('vtoErrReset', 0);
     const ers = ls.get('vtoErrors', []).filter(function (x) { return x.day === today() && x.t > clearedAt && x.t > errResetAt; }).slice(-3);
-    if (ers.length) { L.push({ heading: 'Last errors' }); ers.forEach(function (er) { L.push({ parts: timeParts('  ' + errorLine(er), C_WARN) }); }); }
+    const errCard = ers.map(function (er) { return { parts: timeParts(errorLine(er), C_AMB) }; });   // 4.72: Errors card (was "Last errors" in the box)
     const res = ls.get('vtoResults', []).filter(function (x) { return x.t > dayAgo && x.t > clearedAt; }).slice(-6);   // 4.67: 24 h
     if (res.length) { L.push({ heading: 'VTO events' }); vtoCardLines(res).forEach(function (x) { L.push(x); }); }   // 4.68: cards under the VTO's day
     const pad0 = (r) => String(r).replace(/^(\d):/, '0$1:');   // older lines: 1:05:09 AM -> 01:05:09 AM
     // 4.26: one log: reloads and log lines together by time, last 5
     const logs = boxLog(ls.get('vtoReloads', []), ls.get('vtoLog', []), 5);
-    if (logs.length) { L.push({ heading: 'Log' }); logs.forEach(function (r) { const t = '  ' + pad0(r).replace(' (no refresh - direct accept handles it)', ''); L.push({ parts: timeParts(t, lineColor(t)) }); }); }   // 4.61: white time   // 4.13: that note stays in copy only   // (older-style stay lines stay in copy only)
-    // 4.40: Sessions replaces In-N-Out (the In-N-Out lines are still kept in copy)
-    const sess = ls.get('vtoSessions', []).slice(-4);   // 4.50: latest 4 lines only (Martin keeps the box narrow); copy still has them all
-    if (sess.length) {
-      L.push({ heading: 'Authentication session' });
-      // 4.41: dates padded to one width so the columns line up (like In-N-Out)
-      const lines = sess.map(sessLine), w = Math.max.apply(null, lines.map(function (x) { return x.parts[0].t.length; }));
-      lines.forEach(function (x) { x.parts[0].t = x.parts[0].t.replace(/\s+$/, '') + ' '.repeat(w - x.parts[0].t.replace(/\s+$/, '').length); L.push(x); });
-    }
+    // 4.72: Log card (newest 5); the bubble counts its amber and red lines
+    let logBad = 0, logRed = false;
+    const logCard = logs.map(function (r) {
+      const t = pad0(r).replace(' (no refresh - direct accept handles it)', ''), c = lineColor(t);
+      if (c === C_AMB || c === C_MISS) { logBad++; if (c === C_MISS) logRed = true; }
+      return { parts: timeParts(t, c) };
+    });
+    // 4.72: Sessions card (latest 4, like before)
+    const sessCard = ls.get('vtoSessions', []).slice(-4).map(function (e) { const x = sessLine(e); return { parts: [{ t: x.parts[0].t.trim() + '  ', c: C_TIME }, x.parts[1]] }; });
+    renderRail({ err: errCard, log: logCard, ses: sessCard, errN: errCard.length, logN: logBad, logRed: logRed });
 
     const key = JSON.stringify(L.map(function (x) { return x.live ? 'live' : x; }));
-    if (key === boxKey && liveEl) { const lt = L[0].t; if (liveEl.textContent !== lt) liveEl.textContent = lt; return; }
+    if (key === boxKey && liveEl) { const lt = L[0].parts[1].t; if (liveEl.textContent !== lt) liveEl.textContent = lt; return; }
     boxKey = key;
     const top = box.scrollTop;   // keep your scroll place
     const frag = document.createDocumentFragment();
     liveEl = null;
-    L.forEach(function (item) { const d = mkLine(item); if (item.live) liveEl = d; frag.appendChild(d); });
+    L.forEach(function (item) { const d = mkLine(item); if (item.live) liveEl = d.lastChild; frag.appendChild(d); });
     bodyEl.textContent = '';
     bodyEl.appendChild(frag);
     box.scrollTop = top;
@@ -2071,20 +2149,86 @@
   function toggleAlarm() {
     const muted = !ls.get('vtoAlarmMuted', false);
     ls.set('vtoAlarmMuted', muted);
-    render();
+    railKey = ''; render();
   }
-  function pkBoxLines() {
-    const muted = ls.get('vtoAlarmMuted', false);
-    const night = nightFirst();
-    // 4.68: one line; pills: On green, Off red, Night Shift dark blue, Normal yellow
-    return [{ fix: true, parts: [{ t: 'Critical Alert: ', c: C_TIME }, { btn: muted ? 'Off' : 'On', fn: toggleAlarm, c: muted ? C_MISS : C_ALERT_ON, bg: muted ? C_MISS_BG : C_ACCEPT_BG, first: true },
-      { t: '   Priority: ', c: C_TIME }, { btn: night ? 'Night Shift' : 'Normal', fn: togglePriority, c: night ? '#ffffff' : '#161e2d', bg: night ? '#1d3f8f' : '#ffcc00', first: true },
-      { t: '   Mode: ', c: C_TIME }, { btn: darkMode() ? '☾ Dark' : '☀ Light', fn: toggleTheme, c: C_BASE, bg: darkMode() ? '#2c2c38' : C_BG, border: C_BTN_LINE, first: true }] }];   // 4.69
+  // 4.72: "recent" counts with icons: accepted (green check), missed (gray x), errors (amber warning)
+  function recentLine(n) {
+    const d = document.createElement('div');
+    d.style.cssText = 'white-space:pre;display:flex;align-items:center;';
+    const lab = document.createElement('span'); lab.textContent = 'recent '; lab.style.color = C_TIME; d.appendChild(lab);
+    const icons = [
+      [['circle', { cx: '8', cy: '8', r: '8', fill: C_ACCEPT }], ['path', { d: 'M4.5 8.3l2.2 2.2 4.8-4.8', fill: 'none', stroke: C_BG, 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }]],
+      [['circle', { cx: '8', cy: '8', r: '8', fill: C_FILL_TXT }], ['path', { d: 'M5.3 5.3l5.4 5.4M10.7 5.3l-5.4 5.4', fill: 'none', stroke: C_BG, 'stroke-width': '2', 'stroke-linecap': 'round' }]],
+      [['path', { d: 'M8 1.2 15.3 14.3H.7z', fill: C_AMB, stroke: C_AMB, 'stroke-width': '1.4', 'stroke-linejoin': 'round' }], ['path', { d: 'M8 6v3.6M8 11.9v.1', fill: 'none', stroke: C_BG, 'stroke-width': '1.9', 'stroke-linecap': 'round' }]]
+    ];
+    const cols = [C_ACCEPT, C_FILL_TXT, C_AMB], tips = ['accepted (24 h)', 'missed (24 h)', 'errors (24 h)'];
+    n.forEach(function (v, i) {
+      if (i) { const bar = document.createElement('span'); bar.textContent = ' | '; bar.style.color = C_TIME; d.appendChild(bar); }
+      const g = document.createElement('span'); g.title = tips[i];
+      g.style.cssText = 'display:inline-flex;align-items:center;gap:3px;font-weight:600;color:' + cols[i] + ';';
+      try { g.appendChild(mkSvg('0 0 16 16', 15, icons[i])); } catch (e) {}
+      const t = document.createElement('span'); t.textContent = String(v); g.appendChild(t);
+      d.appendChild(g);
+    });
+    return d;
+  }
+  // 4.72: Settings card rows (Critical Alert, Priority, Mode) and buttons
+  function settingsCard() {
+    const muted = ls.get('vtoAlarmMuted', false), night = nightFirst();
+    const out = document.createDocumentFragment();
+    const row = function (label, b) {
+      const r = document.createElement('div'); r.className = 'vto-srow';
+      const l = document.createElement('span'); l.textContent = label; l.style.color = C_TIME;
+      r.appendChild(l); r.appendChild(b); out.appendChild(r);
+    };
+    row('Critical Alert', mkBtn(muted ? 'Off' : 'On', toggleAlarm, muted ? C_MISS : C_ALERT_ON, muted ? C_MISS_BG : C_ACCEPT_BG));
+    const pb = mkBtn(night ? 'Night Shift' : 'Normal', togglePriority, night ? '#ffffff' : C_WARN, night ? '#1d3f8f' : C_BG);
+    if (!night) { pb.style.border = '1px solid ' + C_WARN; pb.style.padding = '0 9px'; }   // Normal: white with orange words
+    row('Priority', pb);
+    const mb = mkBtn(darkMode() ? '☾ Dark' : '☀ Light', toggleTheme, C_BASE, darkMode() ? '#2c2c38' : C_BG);
+    mb.style.border = '1px solid ' + C_BTN_LINE; mb.style.padding = '0 9px';
+    row('Mode', mb);
+    const bs = document.createElement('div'); bs.style.cssText = 'display:flex;gap:6px;margin-top:9px;flex-wrap:wrap;';
+    bs.appendChild(mkBtn('log out', logOut, C_BASE));
+    bs.appendChild(mkBtn('test alert', testAlert));
+    bs.appendChild(mkBtn('clear log', clearLog));
+    out.appendChild(bs);
+    return out;
+  }
+  // 4.72: rail bubbles and the open card; redrawn only when something in them changed
+  function renderRail(d) {
+    if (!railEl) return;
+    const key = JSON.stringify([openCard, d.errN, d.logN, d.logRed, openCard === 'set' ? [ls.get('vtoAlarmMuted', false), nightFirst(), darkMode()] : openCard ? d[openCard] : 0]);
+    if (key === railKey) return;
+    railKey = key;
+    const setTb = function (k, n, red) { const tb = railEl.__items[k].__tb; tb.style.display = n ? '' : 'none'; tb.textContent = String(n); tb.style.background = red ? C_MISS : C_AMB; };
+    setTb('err', d.errN, false);
+    setTb('log', d.logN, d.logRed);
+    Object.keys(railEl.__items).forEach(function (k) { railEl.__items[k].classList.toggle('on', k === openCard); });
+    dock.__binder.classList.toggle('open', !!openCard);
+    if (!openCard) { cardEl.hidden = true; cardEl.textContent = ''; return; }
+    const fbOld = cardEl.querySelector('.vto-fb'), top = fbOld && cardEl.__k === openCard ? fbOld.scrollTop : 0;
+    cardEl.textContent = '';
+    const fh = document.createElement('div'); fh.className = 'vto-fh';
+    const ti = document.createElement('span'); ti.textContent = CARD_NAMES[openCard];
+    const x = document.createElement('button'); x.type = 'button'; x.className = 'vto-x'; x.title = 'close'; x.textContent = '×';
+    x.addEventListener('click', function (e) { e.stopPropagation(); setCard(null); });
+    fh.appendChild(ti); fh.appendChild(x);
+    const fb = document.createElement('div'); fb.className = 'vto-fb';
+    if (openCard === 'set') fb.appendChild(settingsCard());
+    else {
+      const lines = d[openCard] || [];
+      if (!lines.length) { const e = document.createElement('div'); e.className = 'vto-empty'; e.textContent = openCard === 'err' ? 'No errors today' : 'Nothing yet'; fb.appendChild(e); }
+      lines.forEach(function (it) { fb.appendChild(mkLine(it)); });
+    }
+    cardEl.appendChild(fh); cardEl.appendChild(fb);
+    cardEl.hidden = false; cardEl.__k = openCard;
+    fb.scrollTop = top;
   }
   function togglePriority() {
     const night = !nightFirst();
     ls.set('vtoPriority', night ? 'night' : 'normal');
-    render();
+    railKey = ''; render();
   }
 
   // 4.26: box only: merge reload and log lines ("01:05:09 PM ...") by time, newest last. Each list is already in order;
