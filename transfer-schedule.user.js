@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.24
+// @version      6.25
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.24';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.25';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -438,7 +438,7 @@
   function mkBtn(label, fn) {
     const b = document.createElement('button');
     b.textContent = label;
-    b.style.cssText = 'background:' + C.bg + ';color:' + C.text + ';border:1px solid ' + C.btnLine + ';border-radius:6px;font:600 12px/1.5 ' + FONT + ';padding:2px 9px;cursor:pointer;';
+    b.style.cssText = 'background:' + C.bg + ';color:' + C.text + ';border:1px solid ' + C.btnLine + ';border-radius:6px;font:600 11px/1.5 ' + FONT + ';padding:1px 7px;cursor:pointer;';
     b.addEventListener('mouseenter', () => { b.style.filter = 'brightness(0.94)'; });
     b.addEventListener('mouseleave', () => { b.style.filter = ''; });
     b.addEventListener('click', e => { e.stopPropagation(); fn(); });
@@ -447,12 +447,13 @@
   function buildBox() {
     if (box || !IS_TOP || !document.body) return;
     box = document.createElement('div');
-    box.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483646;width:max-content;max-width:min(96vw,1100px);max-height:90vh;overflow:auto;background:' + C.bg + ';color:' + C.text + ';font:14px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C.border + ';border-radius:8px;box-shadow:0 2px 12px ' + C.shadow + ';';
+    // 6.25: narrow (Martin): fixed 300 px, long lines wrap
+    box.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483646;width:300px;max-width:96vw;box-sizing:border-box;max-height:90vh;overflow:auto;background:' + C.bg + ';color:' + C.text + ';font:13px/1.5 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C.border + ';border-radius:8px;box-shadow:0 2px 12px ' + C.shadow + ';';
     const head = document.createElement('div');
-    head.style.cssText = 'position:relative;padding:8px 10px 8px 14px;font-weight:700;display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:1px solid ' + C.border + ';';
+    head.style.cssText = 'position:relative;padding:7px 8px 7px 12px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;white-space:nowrap;border-bottom:1px solid ' + C.border + ';';
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
-    btns.style.cssText = 'display:flex;gap:4px;align-items:center;';
+    btns.style.cssText = 'display:flex;gap:3px;align-items:center;';
     btns.appendChild(mkBtn('check', checkNow));
     btns.appendChild(mkBtn('copy', () => copyText(report()).then(ok => setStatus(ok ? 'ok' : 'err', ok ? 'copied - paste it to Claude' : 'copy failed'))));
     btns.appendChild(mkBtn('test', () => {
@@ -473,7 +474,7 @@
     flashEl.style.cssText = 'display:none;position:absolute;top:100%;right:10px;margin-top:4px;z-index:1;font:600 11px/1.6 ' + FONT + ';color:' + C.bg + ';background:' + C.text + ';border-radius:6px;padding:1px 8px;white-space:pre;pointer-events:none;';
     head.appendChild(flashEl);
     bodyEl = document.createElement('div');
-    bodyEl.style.cssText = 'padding:8px 14px 10px;white-space:pre;';
+    bodyEl.style.cssText = 'padding:6px 12px 9px;';
     // click ▸ / site name: open that site's list (click again to close; only one open at a time)
     bodyEl.addEventListener('click', e => {
       // 6.11: "mode:" Light / Dark switch on the last / next line
@@ -513,7 +514,7 @@
   }
 
   // small "open" / "copy" buttons at the end of a site row (handled by the click listener in buildBox)
-  const siteBtn = (act, name) => `<span data-act="${act}" data-name="${esc(name)}" style="margin-left:6px;padding:0 8px;border:1px solid ${C.btnLine};border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;color:${C.text}">${act}</span>`;
+  const siteBtn = (act, name) => `<span data-act="${act}" data-name="${esc(name)}" style="margin-left:4px;padding:0 6px;border:1px solid ${C.btnLine};border-radius:6px;font-size:11px;line-height:17px;font-weight:600;cursor:pointer;color:${C.text}">${act}</span>`;
   function copyText(t) {
     try { if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(t).then(() => true, () => fallbackCopy(t)); } catch (e) {}
     return Promise.resolve(fallbackCopy(t));
@@ -533,19 +534,39 @@
 
   // The schedule list shown under a site when its ▸ is clicked. Built only from data already saved by the
   // last check: opening it sends nothing to Amazon.
+  // 6.25: "Mon/Tue/Wed/Thu/Fri" -> "Mon-Fri" (only runs of 3+ days next to each other; the rest stay listed)
+  function daysShort(days) {
+    const W = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const ix = String(days || '').split('/').map(d => W.indexOf(d));
+    if (!ix.length || ix.some(n => n < 0)) return days || '';
+    const out = []; let a = 0;
+    for (let k = 1; k <= ix.length; k++) {
+      if (k < ix.length && ix[k] === ix[k - 1] + 1) continue;
+      out.push(k - a >= 3 ? W[ix[a]] + '–' + W[ix[k - 1]] : ix.slice(a, k).map(n => W[n]).join('/'));
+      a = k;
+    }
+    return out.join('/');
+  }
   function siteList(s) {
     const jobs = loadJSON('siteJobs', {})[s.name];
     // lines wrap (at the " | " gaps) instead of running off the right edge, so the box stays narrow
-    const wrap = inner => `<div style="border-left:2px solid ${C.border};margin:4px 0 6px 8px;padding-left:10px;max-height:45vh;overflow:auto;white-space:normal;max-width:50ch;">${inner}</div>`;
+    const wrap = inner => `<div style="border-left:2px solid ${C.border};margin:3px 0 6px 5px;padding-left:8px;max-height:45vh;overflow:auto;">${inner}</div>`;
     if (!jobs) return wrap(cell('no details yet - press check', 0, C.text));
     if (!jobs.length) return wrap(cell(s.onlyFlex ? 'no flex schedules listed' : 'no schedules listed', 0, C.text));
+    // 6.25: a " | " stays with the piece after it, so a wrapped line never ends in a bar
     const colored = parts => parts.map((p, n) =>
-      (n ? cell(p.join || ' | ', 0, C.text) : '') + cell(p.t, 0, PART_COLOR[p.k] || C.text, p.k === 'main')).join('');
+      (n ? (p.join ? '' : ' ') + '<span style="white-space:nowrap">' + cell(p.join ? p.join : '| ', 0, C.text) : '<span style="white-space:nowrap">') +
+      cell(p.t, 0, PART_COLOR[p.k] || C.text, p.k === 'main') + '</span>').join('');
     return wrap(jobs.map((x, n) => {
       const mark = x.match ? cell(STAR, 0, C.green, true) : cell('✗', 0, C.red, true);
-      let h = `<div${n ? ' style="margin-top:5px"' : ''}>${mark} ${cell(x.i.code, 0, C.text, true)}  ${colored(headParts(x.i))}</div>`;
-      h += `<div style="padding-left:2ch">${colored(detailParts(x.i, x.spots))}</div>`;
-      if (!x.match) h += `<div style="padding-left:2ch">${cell('why: ' + x.reasons.join(', '), 0, C.red)}</div>`;   // 6.14: red like the ✗
+      // 6.25: code on its own line, then type / department, then days + times (Mon-Fri style), then the rest smaller
+      let h = `<div${n ? ` style="margin-top:6px;padding-top:6px;border-top:1px dashed ${C.border}"` : ''}>${mark} ${cell(x.i.code, 0, C.text, true)}</div>`;
+      h += `<div style="padding-left:2ch">${colored(headParts(x.i))}</div>`;
+      const dp = detailParts(x.i, x.spots);
+      if (dp[0] && dp[0].k === 'main' && !x.i.flex) dp[0] = { k: 'main', t: daysShort(x.i.days) + ' ' + (x.i.start || '?') + '-' + (x.i.end || '?') };
+      h += `<div style="padding-left:2ch">${colored(dp.slice(0, 1))}</div>`;
+      if (dp.length > 1) h += `<div style="padding-left:2ch;font-size:12px">${colored(dp.slice(1).map((p, k) => k ? p : Object.assign({}, p, { join: '' })))}</div>`;
+      if (!x.match) h += `<div style="padding-left:2ch;font-size:12px">${cell('why: ' + x.reasons.join(', '), 0, C.red)}</div>`;   // 6.14: red like the ✗
       return h;
     }).join(''));
   }
@@ -618,34 +639,35 @@
       const d = stats[s.name];
       const isOpen = openSite === s.name;
       // ▸ / ▾ and the site name are clickable: they open or close this site's schedule list
-      let line = `<span data-site="${esc(s.name)}" style="cursor:pointer">` +
-        cell(isOpen ? '▾' : '▸', 2, C.cyan) + cell('#' + s.rank + ' ' + s.name, 9, C.text, true) + '</span>';
+      // 6.25: no rank number (Martin); the order still follows the ranking
+      let line = `<span data-site="${esc(s.name)}" style="cursor:pointer;flex:none;width:7ch;white-space:nowrap">` +
+        cell(isOpen ? '▾' : '▸', 0, C.cyan) + ' ' + cell(s.name, 0, C.text, true) + '</span>';
       let status;
       if (!d) status = cell('…', 0, C.text);
       else if (d.error) status = `<span title="${esc(d.error)}">${cell('error', 0, C.orange, true)}</span>`;
       else if (s.onlyFlex) status = flexText(d.flexOpen || 0, d.flexListed || 0);
       else {
-        status = cell(STAR + ' ' + d.match, 6, d.match ? C.green : C.text, d.match > 0) +
-          cell('✗ ' + d.noMatch, 6, d.noMatch ? C.red : C.text, d.noMatch > 0);
+        status = cell(STAR + ' ' + d.match, 5, d.match ? C.green : C.text, d.match > 0) +
+          cell('✗ ' + d.noMatch, 5.5, d.noMatch ? C.red : C.text, d.noMatch > 0);
         if (d.flexListed) status += flexText(d.flexOpen, d.flexListed);
       }
       // last batch change (+added -removed), shown for 24 h after it happened
       if (d && !d.error && d.changedAt && Date.now() - d.changedAt < 24 * 3600 * 1000 && (d.added || d.removed)) {
-        status += '&nbsp;&nbsp;' + cell([d.added ? '+' + d.added : '', d.removed ? '-' + d.removed : ''].filter(Boolean).join(' '), 0, C.yellow, true);
+        status += cell([d.added ? '+' + d.added : '', d.removed ? '-' + d.removed : ''].filter(Boolean).join(' '), 0, C.yellow, true);
       }
       // fixed-width status column so the open / copy buttons line up on every row
-      line += `<span style="display:inline-block;min-width:20ch;white-space:nowrap;vertical-align:bottom">${status}</span>`;
-      line += siteBtn('open', s.name) + siteBtn('copy', s.name);
-      rows += `<div>${line}</div>`;
+      line += `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden">${status}</span>`;
+      line += `<span style="flex:none;white-space:nowrap">${siteBtn('open', s.name)}${siteBtn('copy', s.name)}</span>`;
+      rows += `<div style="display:flex;align-items:center;gap:4px;padding:1px 0">${line}</div>`;
       if (isOpen) rows += siteList(s);
     });
 
-    const legend = `<div style="margin-top:4px">${cell(STAR, 0, C.green)} match   ${cell('✗', 0, C.red)} no match</div>`;
+    const legend = `<div style="margin-top:4px;font-size:12px">${cell(STAR, 0, C.green)} ${cell('match', 0, C.gray)}&nbsp;&nbsp; ${cell('✗', 0, C.red)} ${cell('no match', 0, C.gray)}</div>`;
 
     const lastOk = GM_getValue('lastCheckAt', 0);
     const next = GM_getValue('nextDue', 0);
-    let foot = `<div style="border-top:1px solid ${C.border};margin-top:8px;padding-top:8px;color:${C.text};font-weight:700;font-size:15px;">Checks</div>`;
-    foot += `<div>${cell('last ', 0, C.gray)}${cell(lastOk ? clock(lastOk) : '—', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('next ', 0, C.gray)}${cell(next > Date.now() ? clock(next) : 'soon', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('mode: ', 0, C.gray)}<span data-mode="1" title="switch the Transfer box between light and dark" style="padding:0 8px;border:1px solid ${C.btnLine};border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;color:${C.text};background:${themeNow === 'dark' ? '#2c2c38' : C.bg}">${themeNow === 'dark' ? '☾ Dark' : '☀ Light'}</span></div>`;
+    let foot = `<div style="border-top:1px solid ${C.border};margin-top:7px;padding-top:6px;color:${C.text};font-weight:700;font-size:13px;">Checks</div>`;
+    foot += `<div style="white-space:nowrap">${cell('last ', 0, C.gray)}${cell(lastOk ? clock(lastOk) : '—', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('next ', 0, C.gray)}${cell(next > Date.now() ? clock(next) : 'soon', 0, C.azOrange)} ${cell('|', 0, C.gray)} ${cell('mode: ', 0, C.gray)}<span data-mode="1" title="switch the Transfer box between light and dark" style="padding:0 6px;border:1px solid ${C.btnLine};border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;color:${C.text};background:${themeNow === 'dark' ? '#2c2c38' : C.bg}">${themeNow === 'dark' ? '☾ Dark' : '☀ Light'}</span></div>`;
     if (st.text && st.kind === 'err') foot += `<div>${cell('! ' + st.text, 0, C.orange)}</div>`;
 
     const html = rows + legend + foot;
