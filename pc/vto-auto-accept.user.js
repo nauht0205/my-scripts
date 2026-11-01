@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.75
+// @version      4.76
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @description  (PC) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -271,7 +271,8 @@
   // 4.74 (Martin, 11/1): the "!! log out did not sign you out - press it again" line is gone too (old ones cleaned once).
   // 4.75 (Martin, 11/1): the rail sits on top of the box, as wide as the box, icons spread evenly; a card opens upward
   //   from it, as wide as the box. Everything else as in 4.72.
-  const VERSION = '4.75';
+  // 4.76 (Martin, 11/1): slimmer rail (40 px tall, was 48); the bubbles sit inside it.
+  const VERSION = '4.76';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1794,14 +1795,15 @@
       '#vto-box .vto-fb{flex:1;overflow:auto;padding:6px 12px 10px;}' +
       '#vto-box .vto-rail{display:flex;flex-direction:row;align-items:center;justify-content:space-around;gap:6px;padding:6px 8px;background:var(--vbg);color:var(--vmut);border:1px solid var(--vline);border-radius:10px;box-shadow:0 2px 10px var(--vshadow);}' +
       '#vto-box .vto-binder.open .vto-rail{background:var(--vrmut);border-top:0;border-radius:0 0 10px 10px;}' +
-      '#vto-box .vto-ri{position:relative;width:34px;height:34px;border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--vmut);box-sizing:border-box;}' +
+      '#vto-box .vto-ri{position:relative;width:32px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--vmut);box-sizing:border-box;}' +
       '#vto-box .vto-ri:hover{color:var(--vfg);}' +
       '#vto-box .vto-ri svg{transition:transform .12s;}' +
       '#vto-box .vto-binder.open .vto-ri:not(.on) svg{opacity:.4;}' +
-      '#vto-box .vto-binder.open .vto-ri.on{background:var(--vbg);color:var(--vfg);width:34px;height:44px;margin-top:-10px;padding-top:4px;border-radius:0 0 10px 10px;z-index:3;}' +
-      '#vto-box .vto-binder.open .vto-ri.on svg{transform:scale(1.25);}' +
-      '#vto-box .vto-tb{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;border-radius:999px;color:#fff;font:700 10px/15px Arial,sans-serif;text-align:center;padding:0 3px;box-sizing:border-box;}' +
-      '#vto-box .vto-sep{width:1px;height:20px;background:var(--vline);margin:0 1px;}' +
+      '#vto-box .vto-binder.open .vto-ri.on{background:var(--vbg);color:var(--vfg);width:32px;height:36px;margin-top:-10px;padding-top:6px;border-radius:0 0 8px 8px;z-index:3;}' +
+      '#vto-box .vto-binder.open .vto-ri.on .vto-tb{top:6px;}' +
+      '#vto-box .vto-binder.open .vto-ri.on svg{transform:scale(1.15);}' +
+      '#vto-box .vto-tb{position:absolute;top:-4px;right:-5px;min-width:15px;height:15px;border-radius:999px;color:#fff;font:700 10px/15px Arial,sans-serif;text-align:center;padding:0 3px;box-sizing:border-box;}' +
+      '#vto-box .vto-sep{width:1px;height:16px;background:var(--vline);margin:0 1px;}' +
       '#vto-box .vto-srow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:5px 0;}' +
       '#vto-box .vto-empty{color:var(--vmut);}';
     dock.appendChild(css);
