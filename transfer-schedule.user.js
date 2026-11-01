@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.25
+// @version      6.26
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.25';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.26';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -137,6 +137,12 @@
   const CHECK_LEAD_SEC = 20, SITE_LEAD_SEC = 8;
   const toMin = t => { const [h, m] = String(t || '').split(':').map(Number); return h * 60 + (m || 0); };
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // 6.26: a check that is really running refreshes 'running' every 10 s; one that has not for 40 s
+  // (tab reloaded or closed mid-check) no longer blocks anything
+  const RUN_STALE_MS = 40 * 1000, REQ_TIMEOUT_MS = 20 * 1000;
+  const checkRunning = () => GM_getValue('running', 0) > Date.now() - RUN_STALE_MS;
+  // 6.26: an Amazon request that gets no answer in 20 s counts as failed (was: wait forever)
+  const withTimeout = (p, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(what + ': no answer from Amazon in ' + REQ_TIMEOUT_MS / 1000 + ' s')), REQ_TIMEOUT_MS))]);
   const clock = t => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
   function uuid() {
@@ -148,7 +154,7 @@
 
   // ---------- Amazon requests ----------
   async function gql(operationName, variables, query) {
-    const res = await pageFetch(`${GQL_URL}?employeeId=${encodeURIComponent(employeeId)}`, {
+    const res = await withTimeout(pageFetch(`${GQL_URL}?employeeId=${encodeURIComponent(employeeId)}`, {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -158,9 +164,9 @@
         'x-atoz-client-request-id': uuid(),
       },
       body: JSON.stringify({ operationName, variables, query }),
-    });
+    }), operationName);
     // 6.7: every error carries what Amazon actually sent back (cut to 300 characters), for the copy button
-    const text = await res.text().catch(() => '');
+    const text = await withTimeout(res.text(), operationName).catch(() => '');
     const said = t => ' | Amazon said: ' + String(t || '(nothing)').replace(/\s+/g, ' ').slice(0, 300);
     if (!res.ok) throw new Error(operationName + ': HTTP ' + res.status + (res.status === 401 || res.status === 403 ? ' (signed out?)' : '') + said(text));
     let json;
@@ -420,7 +426,7 @@
   const STAR = '★';   // match mark in the box (green)
   // 6.10: Amazon Ember, the A to Z app font, like the VTO box (the A to Z page loads it, so asking by name is enough)
   const FONT = '"Amazon Ember", "Amazon Ember Display", Arial, Helvetica, sans-serif';
-  let box = null, headLabel = null, bodyEl = null, flashEl = null, lastHtml = '', lastHead = '';
+  let box = null, headLabel = null, headStatus = null, bodyEl = null, flashEl = null, lastHtml = '', lastHead = '';
   let collapsed = !!GM_getValue('boxCollapsed', false);
 
   function setStatus(kind, text) { saveJSON('status2', { kind, text, t: Date.now() }); if (kind === 'ok' && text) flash(text); render(); }
@@ -450,7 +456,7 @@
     // 6.25: narrow (Martin): fixed 300 px, long lines wrap
     box.style.cssText = 'position:fixed;left:6px;bottom:6px;z-index:2147483646;width:300px;max-width:96vw;box-sizing:border-box;max-height:90vh;overflow:auto;background:' + C.bg + ';color:' + C.text + ';font:13px/1.5 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C.border + ';border-radius:8px;box-shadow:0 2px 12px ' + C.shadow + ';';
     const head = document.createElement('div');
-    head.style.cssText = 'position:relative;padding:7px 8px 7px 12px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;white-space:nowrap;border-bottom:1px solid ' + C.border + ';';
+    head.style.cssText = 'position:relative;padding:7px 8px 7px 12px;font-weight:700;font-size:14px;display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;column-gap:8px;row-gap:0;white-space:nowrap;border-bottom:1px solid ' + C.border + ';';
     headLabel = document.createElement('span');
     const btns = document.createElement('span');
     btns.style.cssText = 'display:flex;gap:3px;align-items:center;';
@@ -470,6 +476,11 @@
     btns.appendChild(minBtn);
     head.appendChild(headLabel);
     head.appendChild(btns);
+    // 6.26: status (Checking… / Paused / problems) on its own line under the title, full width,
+    // so it never pushes the buttons out of the box
+    headStatus = document.createElement('div');
+    headStatus.style.cssText = 'display:none;flex-basis:100%;font-size:12px;font-weight:600;line-height:1.35;white-space:normal;';
+    head.appendChild(headStatus);
     flashEl = document.createElement('span');
     flashEl.style.cssText = 'display:none;position:absolute;top:100%;right:10px;margin-top:4px;z-index:1;font:600 11px/1.6 ' + FONT + ';color:' + C.bg + ';background:' + C.text + ';border-radius:6px;padding:1px 8px;white-space:pre;pointer-events:none;';
     head.appendChild(flashEl);
@@ -609,7 +620,7 @@
     if (wantTheme() !== themeNow) { applyTheme(); box.remove(); box = null; lastHtml = ''; lastHead = ''; buildBox(); return; }
     const st = loadJSON('status2', { kind: '', text: '' });
     const err = loadJSON('err', { fails: 0 });
-    const running = GM_getValue('running', 0) > Date.now() - 3 * 60 * 1000;
+    const running = checkRunning();
     // 6.9: like the VTO box: white header, status in orange; a full orange bar only when something needs you
     let label = '', bar = false;
     if (!employeeId) { label = 'OPEN TRANSFER PAGE ONCE'; bar = true; }
@@ -624,7 +635,10 @@
       h.style.background = bar ? C.azOrange : C.bg;
       h.style.borderBottomColor = bar ? C.azOrange : C.border;
       h.style.color = bar ? C.onWarn : C.text;
-      headLabel.innerHTML = 'Transfer ' + esc(VERSION) + (label ? ` <span style="font-weight:400;${bar ? '' : 'color:' + C.gray}">|</span> <span style="${bar ? '' : 'color:' + C.azOrange}">${esc(label)}</span>` : '');
+      headLabel.textContent = 'Transfer ' + VERSION;
+      headStatus.textContent = label;
+      headStatus.style.display = label ? 'block' : 'none';
+      headStatus.style.color = bar ? C.onWarn : C.azOrange;
     }
 
     bodyEl.style.display = collapsed ? 'none' : 'block';
@@ -830,7 +844,7 @@
   let checking = false;
   function checkNow() {
     if (!employeeId) { setStatus('err', 'open the Transfer page once first (in a second tab)'); return; }
-    if (checking || GM_getValue('running', 0) > Date.now() - 3 * 60 * 1000) { setStatus('ok', 'already checking…'); return; }
+    if (checking || checkRunning()) { setStatus('ok', 'already checking…'); return; }
     GM_setValue('nextDue', 0);
     if (inQuietWindow(CHECK_LEAD_SEC)) { setStatus('ok', 'paused for VTO - will check after :01'); return; }
     tick();
@@ -839,13 +853,15 @@
   async function tick() {
     if (!employeeId) { render(); return; }
     if (inQuietWindow(CHECK_LEAD_SEC)) { render(); return; }
-    if (checking || Date.now() < GM_getValue('nextDue', 0)) return;
-    GM_setValue('nextDue', Date.now() + 3 * 60 * 1000);
+    if (checking || checkRunning() || Date.now() < GM_getValue('nextDue', 0)) return;
+    GM_setValue('nextDue', Date.now() + RUN_STALE_MS);
     GM_setValue('running', Date.now());
     checking = true;
+    const beat = setInterval(() => { GM_setValue('running', Date.now()); GM_setValue('nextDue', Date.now() + RUN_STALE_MS); }, 10000);
     render();
     let result = 'done';
     try { result = await runCheck(); } catch (e) { setStatus('err', e.message); log('!! check stopped: ' + e.message); }
+    clearInterval(beat);
     checking = false;
     GM_setValue('running', 0);
     GM_setValue('nextDue', result === 'quiet'
@@ -1306,6 +1322,12 @@
     startHighlighter();
     setTimeout(tick, 5000);
     setInterval(tick, 30000);
+    // 6.26: this tab is reloaded or closed in the middle of a check: free it and start over on the next load
+    window.addEventListener('pagehide', () => {
+      if (!checking) return;
+      GM_setValue('running', 0); GM_setValue('nextDue', 0);
+      log('check cut off (page reloaded or closed), starting again');
+    });
   }
   if (document.readyState === 'complete') start();
   else window.addEventListener('load', start);
