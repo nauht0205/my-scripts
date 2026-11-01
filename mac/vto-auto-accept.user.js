@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.74
+// @version      4.75
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -267,7 +267,9 @@
   // 4.73 (Martin, 11/1): no sign-out / sign-in lines in the log (Sessions covers them): "!! SIGNED OUT ... log in again",
   //   "signed in again", "you clicked log out", "you clicked Log Out". Old ones are taken out of the log once.
   // 4.74 (Martin, 11/1): the "!! log out did not sign you out - press it again" line is gone too (old ones cleaned once).
-  const VERSION = '4.74';
+  // 4.75 (Martin, 11/1): the rail sits on top of the box, as wide as the box, icons spread evenly; a card opens upward
+  //   from it, as wide as the box. Everything else as in 4.72.
+  const VERSION = '4.75';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1776,28 +1778,28 @@
     // 4.72: the dock holds the rail (with its card) and the box side by side, bottom right
     dock = document.createElement('div');
     dock.id = 'vto-box';
-    dock.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;display:flex;align-items:flex-end;gap:6px;max-width:96vw;pointer-events:none;' +
+    dock.style.cssText = 'position:fixed;right:6px;bottom:6px;z-index:2147483647;display:flex;flex-direction:column;align-items:stretch;gap:6px;max-width:96vw;pointer-events:none;' +
       '--vbg:' + C_BG + ';--vfg:' + C_BASE + ';--vmut:' + C_TIME + ';--vline:' + C_LINE + ';--vrmut:' + C_RAIL_MUT + ';--vamb:' + C_AMB + ';--vmiss:' + C_MISS + ';--vshadow:' + C_SHADOW + ';';
     ['mousedown', 'mouseup', 'click', 'dblclick', 'pointerdown', 'pointerup', 'selectstart', 'copy'].forEach(function (n) { dock.addEventListener(n, function (e) { e.stopPropagation(); }); });
     const css = document.createElement('style');   // also when the page turns text selection off for everything
     css.textContent = '#vto-box, #vto-box * { -webkit-user-select: text !important; user-select: text !important; box-sizing: content-box; }' +
-      '#vto-box .vto-binder{display:flex;align-items:stretch;pointer-events:auto;}' +
-      '#vto-box .vto-card{width:260px;max-height:62vh;display:flex;flex-direction:column;background:var(--vbg);color:var(--vfg);border:1px solid var(--vline);border-right:0;border-radius:10px 0 0 10px;box-shadow:-2px 2px 10px var(--vshadow);position:relative;z-index:2;font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;}' +
+      '#vto-box .vto-binder{display:flex;flex-direction:column;align-items:stretch;width:0;min-width:100%;pointer-events:auto;}' +
+      '#vto-box .vto-card{max-height:40vh;display:flex;flex-direction:column;background:var(--vbg);color:var(--vfg);border:1px solid var(--vline);border-bottom:0;border-radius:10px 10px 0 0;box-shadow:0 -2px 10px var(--vshadow);position:relative;z-index:2;font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;}' +
       '#vto-box .vto-card[hidden]{display:none !important;}' +
       '#vto-box .vto-fh{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:14px;padding:9px 12px 2px;}' +
       '#vto-box .vto-x{border:0;background:none;padding:0;width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--vmut);font:400 20px/1 Arial,sans-serif;}' +
       '#vto-box .vto-x:hover{background:var(--vline);color:var(--vfg);}' +
       '#vto-box .vto-fb{flex:1;overflow:auto;padding:6px 12px 10px;}' +
-      '#vto-box .vto-rail{display:flex;flex-direction:column;align-items:center;gap:6px;padding:8px 6px;background:var(--vbg);color:var(--vmut);border:1px solid var(--vline);border-radius:10px;box-shadow:0 2px 10px var(--vshadow);}' +
-      '#vto-box .vto-binder.open .vto-rail{background:var(--vrmut);border-left:0;border-radius:0 10px 10px 0;}' +
+      '#vto-box .vto-rail{display:flex;flex-direction:row;align-items:center;justify-content:space-around;gap:6px;padding:6px 8px;background:var(--vbg);color:var(--vmut);border:1px solid var(--vline);border-radius:10px;box-shadow:0 2px 10px var(--vshadow);}' +
+      '#vto-box .vto-binder.open .vto-rail{background:var(--vrmut);border-top:0;border-radius:0 0 10px 10px;}' +
       '#vto-box .vto-ri{position:relative;width:34px;height:34px;border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--vmut);box-sizing:border-box;}' +
       '#vto-box .vto-ri:hover{color:var(--vfg);}' +
       '#vto-box .vto-ri svg{transition:transform .12s;}' +
       '#vto-box .vto-binder.open .vto-ri:not(.on) svg{opacity:.4;}' +
-      '#vto-box .vto-binder.open .vto-ri.on{background:var(--vbg);color:var(--vfg);width:44px;height:40px;margin-left:-10px;padding-left:2px;border-radius:0 10px 10px 0;z-index:3;}' +
+      '#vto-box .vto-binder.open .vto-ri.on{background:var(--vbg);color:var(--vfg);width:34px;height:44px;margin-top:-10px;padding-top:4px;border-radius:0 0 10px 10px;z-index:3;}' +
       '#vto-box .vto-binder.open .vto-ri.on svg{transform:scale(1.25);}' +
       '#vto-box .vto-tb{position:absolute;top:-5px;right:-5px;min-width:15px;height:15px;border-radius:999px;color:#fff;font:700 10px/15px Arial,sans-serif;text-align:center;padding:0 3px;box-sizing:border-box;}' +
-      '#vto-box .vto-sep{width:20px;height:1px;background:var(--vline);margin:1px 0;}' +
+      '#vto-box .vto-sep{width:1px;height:20px;background:var(--vline);margin:0 1px;}' +
       '#vto-box .vto-srow{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:5px 0;}' +
       '#vto-box .vto-empty{color:var(--vmut);}';
     dock.appendChild(css);
@@ -1822,7 +1824,7 @@
     dock.appendChild(binder); dock.__binder = binder;
     box = document.createElement('div');
     // 4.26: as wide as its longest fixed line; long lines wrap; scrolls up and down
-    box.style.cssText = 'position:relative;pointer-events:auto;width:max-content;max-width:calc(96vw - 60px);max-height:70vh;overflow-y:auto;overflow-x:hidden;background:' + C_BG + ';color:' + C_BASE + ';font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C_LINE + ';border-radius:8px;box-shadow:0 2px 12px ' + C_SHADOW + ';cursor:auto;box-sizing:border-box;';
+    box.style.cssText = 'position:relative;pointer-events:auto;width:max-content;max-width:96vw;max-height:70vh;overflow-y:auto;overflow-x:hidden;background:' + C_BG + ';color:' + C_BASE + ';font:13px/1.6 ' + FONT + ';font-variant-numeric:tabular-nums;border:1px solid ' + C_LINE + ';border-radius:8px;box-shadow:0 2px 12px ' + C_SHADOW + ';cursor:auto;box-sizing:border-box;';
     box.id = 'vto-main';
     const head = document.createElement('div');
     head.style.cssText = 'position:sticky;top:0;padding:8px 8px 8px 12px;font-weight:700;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;white-space:pre;background:' + C_BG + ';border-bottom:1px solid ' + C_LINE + ';';
