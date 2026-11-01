@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.73
+// @version      4.74
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/mac/vto-auto-accept.user.js
 // @description  (Mac) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -266,8 +266,8 @@
   //   Error lines are amber (was orange). Nothing about checking or accepting changed.
   // 4.73 (Martin, 11/1): no sign-out / sign-in lines in the log (Sessions covers them): "!! SIGNED OUT ... log in again",
   //   "signed in again", "you clicked log out", "you clicked Log Out". Old ones are taken out of the log once.
-  //   The "!! log out did not sign you out" warning stays.
-  const VERSION = '4.73';
+  // 4.74 (Martin, 11/1): the "!! log out did not sign you out - press it again" line is gone too (old ones cleaned once).
+  const VERSION = '4.74';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -831,7 +831,6 @@
       const pkAny = signedInHere && !!((lw.pk && lw.pk >= lw.since) || (lw.pw && lw.pw >= lw.since) || pk2);
       if (resetNow) {
         ls.set('vtoResetResult', { t: resetAt, at: startedAt, ok: pkAny, signIn: signedInHere });
-        if (!signedInHere) logAction('!! log out did not sign you out - press it again');   // 4.43: a log out that worked shows in Authentication Session only
       }
       const reason0 = resetNow ? 'you clicked log out' + (signedInHere ? '' : ', but you stayed signed in')
         : manual ? 'you signed out yourself'
@@ -2061,7 +2060,6 @@
       const r = ls.get('vtoResetResult', null); if (r && r.t >= at - 1000) return;
       const lw = loginWatch(); if (lw && lw.since >= at - 5000) return;   // a sign-in after the reset: checkGapAtStart reports it
       ls.set('vtoResetResult', { t: at, at: Date.now(), ok: false, signIn: false });
-      logAction('!! log out did not sign you out - press it again');
     } catch (e) {}
   }
   function render() {
@@ -2455,10 +2453,10 @@
   function init() {
     setShared('vtoGoVto', '0');   // back on VTO: A to Z's home page works normally again
     migrateOldWording();
-    try {   // 4.73: one time, take the old sign-out / sign-in lines out of the log
-      if (!ls.get('vtoLogClean473', false)) {
-        ls.set('vtoLog', ls.get('vtoLog', []).filter(function (x) { return !/ (?:!! SIGNED OUT \(.*log in again|signed in again|you clicked (?:log ?out|sign ?out|log off)|log out: pressed)$/i.test(String(x)); }));
-        ls.set('vtoLogClean473', true);
+    try {   // 4.73/4.74: one time, take the old sign-out / sign-in lines out of the log
+      if (!ls.get('vtoLogClean474', false)) {
+        ls.set('vtoLog', ls.get('vtoLog', []).filter(function (x) { return !/ (?:!! SIGNED OUT \(.*log in again|signed in again|you clicked (?:log ?out|sign ?out|log off)|log out: pressed|!! log out did not sign you out - press it again)$/i.test(String(x)); }));
+        ls.set('vtoLogClean474', true);
       }
     } catch (e) {}
     setTimeout(recordSignIn, 3000);
