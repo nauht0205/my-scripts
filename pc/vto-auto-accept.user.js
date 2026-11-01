@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         VTO Auto Accept
 // @namespace    martin.vto
-// @version      4.72
+// @version      4.73
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js
 // @description  (PC) Watches A to Z VTO in the background, accepts open VTO directly one at a time, night shift (8:30 PM-12:30 AM) first, then soonest date (fast checks, extra-fast :59:59-:00:05 and a :59:50 refresh for the 8 AM-2 PM :00 drops, reads the page's own list), never clicks to accept, alias auto sign-in, log out button, clear status box
@@ -266,7 +266,10 @@
   //   Errors and Log show a bubble with the number of amber/red lines still showing in that card (red if any is red).
   //   Settings card: Critical Alert, Priority (Normal = white with orange words), Mode, log out, test alert, clear log.
   //   Error lines are amber (was orange). Nothing about checking or accepting changed.
-  const VERSION = '4.72';
+  // 4.73 (Martin, 11/1): no sign-out / sign-in lines in the log (Sessions covers them): "!! SIGNED OUT ... log in again",
+  //   "signed in again", "you clicked log out", "you clicked Log Out". Old ones are taken out of the log once.
+  //   The "!! log out did not sign you out" warning stays.
+  const VERSION = '4.73';
   const EMPLOYEE_ID = '203782037';
   const API_URL = 'https://atoz-apps.amazon.work/apis/ScheduleManagementAssociateGateway/graphql?employeeId=' + EMPLOYEE_ID;
   const DIRECT_ACCEPT = true;      // send AcceptVto directly (skips the click chain)
@@ -1035,7 +1038,6 @@
   function signedOut(why) {
     if (signedOutFlag) return;
     signedOutFlag = true;
-    logAction('!! SIGNED OUT (' + why + ') - log in again');
     const manual = parseInt(getShared('vtoManual') || '0', 10) > Date.now() - 600000;
     const sum = manual ? '' : staySummary(Date.now());
     addSignEvent(dayTime(Date.now()) + ' SIGNED OUT: ' + (manual ? 'you signed out yourself' : why) + (sum ? ' - ' + sum : ''));
@@ -1522,7 +1524,7 @@
       window.__lastPollT = Date.now();
       checks++;
       lastError = '';
-      if (signedOutFlag) { signedOutFlag = false; if (origTitle) document.title = origTitle; logAction('signed in again'); }
+      if (signedOutFlag) { signedOutFlag = false; if (origTitle) document.title = origTitle; }
       // answers can arrive out of order: never let an older list overwrite a newer one
       if (seq > pollDoneSeq) { pollDoneSeq = seq; handleList(j, 'own check'); }
     } catch (e) {
@@ -2050,7 +2052,7 @@
     // 4.47: one click (was two)
     setShared('vtoReset', Date.now());
     ls.set('vtoResetAt', Date.now());
-    logAction('you clicked log out');   // 4.66: the only log line for it (the page click watcher skips the box)
+    // 4.73: no log line (Sessions shows "you clicked log out"); the page click watcher skips the box
     reloading = true;   // not a closed page
     location.assign(LOGOUT_URL);
   }
@@ -2380,7 +2382,7 @@
       const b = e.target && e.target.closest && e.target.closest('button, a, [role="button"], [role="menuitem"]');
       if (b && b.closest('#vto-box')) return;   // 4.66: the box's own log out button logs itself
       const t = b ? String(b.innerText || b.textContent || '').trim() : '';
-      if (/^(log ?out|sign ?out|log off)$/i.test(t)) { setShared('vtoManual', Date.now()); logAction('you clicked ' + t); }
+      if (/^(log ?out|sign ?out|log off)$/i.test(t)) { setShared('vtoManual', Date.now()); }   // 4.73: Sessions shows it, no log line
     } catch (err) {}
   }, true);
 
@@ -2455,6 +2457,12 @@
   function init() {
     setShared('vtoGoVto', '0');   // back on VTO: A to Z's home page works normally again
     migrateOldWording();
+    try {   // 4.73: one time, take the old sign-out / sign-in lines out of the log
+      if (!ls.get('vtoLogClean473', false)) {
+        ls.set('vtoLog', ls.get('vtoLog', []).filter(function (x) { return !/ (?:!! SIGNED OUT \(.*log in again|signed in again|you clicked (?:log ?out|sign ?out|log off)|log out: pressed)$/i.test(String(x)); }));
+        ls.set('vtoLogClean473', true);
+      }
+    } catch (e) {}
     setTimeout(recordSignIn, 3000);
     origTitle = document.title;
     startedAt = Date.now();
