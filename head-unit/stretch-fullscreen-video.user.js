@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.22
+// @version      5.23
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -806,6 +806,20 @@
     return keepAliveUrl;
   }
   let keepAliveEl = null;
+  // Off a video page nothing tells Android what is playing. Give the session a name, like a real
+  // video does: the car seems to send its buttons only to a player that has one (from YouTube Home
+  // it worked when coming from a video, which leaves its title behind, but not after a fresh load).
+  function nameSession() {
+    if (onWatchPage() || !('mediaSession' in navigator)) return;
+    try {
+      const ms = navigator.mediaSession;
+      if (!ms.metadata || !ms.metadata.title) {
+        ms.metadata = new MediaMetadata({ title: 'YouTube', artist: 'Wheel: ▲ move · ▼ open' });
+        dbg('session named for the car');
+      }
+      ms.playbackState = 'playing';
+    } catch (e) { dbg('naming the session failed: ' + (e && e.message), true); }
+  }
   function startKeepAlive() {
     stopKeepAlive();
     try {
@@ -813,7 +827,7 @@
       keepAlive = keepAliveEl;
       keepAlive.currentTime = 0;
       const p = keepAlive.play();
-      if (p && p.then) p.then(() => dbg('silent keep-alive playing'), (e) => dbg('keep-alive blocked: ' + (e && e.name), true));
+      if (p && p.then) p.then(() => { dbg('silent keep-alive playing'); nameSession(); }, (e) => dbg('keep-alive blocked: ' + (e && e.name), true));
     } catch (e) { dbg('keep-alive failed: ' + (e && e.name), true); }
     keepAliveTimer = setTimeout(stopKeepAlive, 30 * 60 * 1000);
   }
@@ -1187,7 +1201,7 @@
     // sending ▲ / ▼ there.
     setInterval(() => {
       if (onWatchPage() || document.visibilityState !== 'visible') return;
-      if (keepAlive && !keepAlive.paused && !audibleVideoPlaying()) return;
+      if (keepAlive && !keepAlive.paused && !audibleVideoPlaying()) { nameSession(); return; }
       dbg('wheel: starting the near-silent sound');
       keepWheelAlive();
     }, 3000);
