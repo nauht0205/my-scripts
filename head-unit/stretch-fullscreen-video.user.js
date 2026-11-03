@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.9
+// @version      5.10
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
@@ -236,6 +236,7 @@
 
   function useCarTap() {
     cancelCarTap();
+    if (typeof stopKeepAlive === 'function') stopKeepAlive();
     startPlayback();
     if (fullscreenElement()) return;
     const v = biggestVideo();
@@ -627,10 +628,47 @@
   // Seek ▼ = play/pause. Pausing just pauses (fullscreen or not). Playing also goes fullscreen:
   // in fullscreen it simply resumes; outside fullscreen it asks MacroDroid for the tap that
   // starts the video in fullscreen.
+  // While a video is paused, the car stops sending its buttons to Firefox (nothing is playing).
+  // So a pause from the wheel keeps a silent sound playing; the car keeps talking to Firefox and
+  // the next press can resume. The silence stops as soon as a video plays (or after 30 minutes).
+  let keepAlive = null, keepAliveUrl = null, keepAliveTimer = 0;
+  function silentWavUrl() {
+    if (keepAliveUrl) return keepAliveUrl;
+    const rate = 8000, n = rate;                 // 1 second, 8 kHz, 16-bit mono, all zeros
+    const buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf);
+    const str = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
+    d.setUint32(24, rate, true); d.setUint32(28, rate * 2, true); d.setUint16(32, 2, true); d.setUint16(34, 16, true);
+    str(36, 'data'); d.setUint32(40, n * 2, true);
+    keepAliveUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    return keepAliveUrl;
+  }
+  function startKeepAlive() {
+    stopKeepAlive();
+    try {
+      keepAlive = new Audio(silentWavUrl());
+      keepAlive.loop = true;
+      const p = keepAlive.play();
+      if (p && p.then) p.then(() => dbg('silent keep-alive playing'), (e) => dbg('keep-alive blocked: ' + (e && e.name), true));
+    } catch (e) { dbg('keep-alive failed: ' + (e && e.name), true); }
+    keepAliveTimer = setTimeout(stopKeepAlive, 30 * 60 * 1000);
+  }
+  function stopKeepAlive() {
+    clearTimeout(keepAliveTimer);
+    if (keepAlive) { try { keepAlive.pause(); } catch (_) {} keepAlive = null; }
+  }
+  document.addEventListener('play', (e) => { if (e.target !== keepAlive && e.target.tagName === 'VIDEO') stopKeepAlive(); }, true);
+
+  function pauseFromCar(v) {
+    v.pause();
+    startKeepAlive();
+  }
+
   function playFullscreen() {
     const v = biggestVideo();
-    if (v && !v.paused) { v.pause(); return; }
-    if (fullscreenElement()) { if (v) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} } return; }
+    if (v && !v.paused) { pauseFromCar(v); return; }
+    if (fullscreenElement()) { stopKeepAlive(); if (v) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} } return; }
     requestCarTap();
   }
 
@@ -759,8 +797,8 @@
       try { navigator.mediaSession.setActionHandler('previoustrack', onSeekPrev); } catch (_) {}
       // The car may send play / pause / stop instead (for example while the video is paused).
       try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); const v = biggestVideo(); if (!v || v.paused) playFullscreen(); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); const v = biggestVideo(); if (v && !v.paused) v.pause(); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); const v = biggestVideo(); if (v && !v.paused) v.pause(); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
     };
     claim();
     // YouTube sets its own media handlers when a video loads, so keep claiming the button.
