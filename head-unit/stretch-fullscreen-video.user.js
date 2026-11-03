@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.15
+// @version      5.16
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -198,16 +198,18 @@
     carTap = null;
   }
 
-  function requestCarTap() {
-    if (window !== window.top || !document.body) return;
+  // mode 'wake': the tap only turns the wheel on (and is kept from the page), e.g. on YouTube Home.
+  function requestCarTap(mode) {
+    if (window !== window.top) return;
     cancelCarTap();
     const el = document.createElement('div');
-    el.textContent = '⛶  ' + CAR_TAP_TEXT;
+    el.textContent = mode === 'wake' ? '🎛  ' + CAR_TAP_TEXT + ' (wheel on)' : '⛶  ' + CAR_TAP_TEXT;
     el.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:2147483647;' +
       'background:rgba(0,0,0,.85);color:#fff;font:700 26px/1.2 sans-serif;padding:18px 30px;border-radius:30px;' +
       'border:2px solid rgba(255,255,255,.6);pointer-events:none;';
-    (fullscreenElement() || document.body).appendChild(el);
-    carTap = { el, pressed: false, timer: setTimeout(cancelCarTap, 6000) };
+    carTap = { el, mode, pressed: false, timer: setTimeout(cancelCarTap, mode === 'wake' ? 10000 : 6000) };
+    const show = () => { if (carTap && carTap.el === el) (fullscreenElement() || document.body).appendChild(el); };
+    if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
   }
 
   // The YouTube player (or any player), even before its video has loaded.
@@ -235,7 +237,9 @@
   }
 
   function useCarTap() {
+    const mode = carTap && carTap.mode;
     cancelCarTap();
+    if (mode === 'wake') { dbg('wheel turned on'); keepWheelAlive(); return; }
     if (typeof stopKeepAlive === 'function') stopKeepAlive();
     startPlayback();
     if (fullscreenElement()) return;
@@ -460,6 +464,22 @@
   //   - anything else with no touch on the page (Firefox's mini player, back button):
   //     the pill shows; tapping the pill restores, a tap anywhere else just dismisses it.
   const IS_TOP = window === window.top;
+
+  // ---- Firefox unused for a while (car off, unit restarted...) → open on YouTube Home ----
+  // Time in minutes; only time with Firefox on screen counts as used.
+  const IDLE_HOME_MIN = 10;
+  let lastUsedMark = 0;
+  function lastUsed() { try { return +localStorage.getItem('sv-last-used') || 0; } catch (_) { return 0; } }
+  function markUsed(t) { try { localStorage.setItem('sv-last-used', String(t)); } catch (_) {} }
+  let leavingForHome = false;
+  if (IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname)) {
+    const last = lastUsed(), now = Date.now();
+    if (last && now - last > IDLE_HOME_MIN * 60000 && location.pathname !== '/') {
+      leavingForHome = true;
+      markUsed(now);
+      location.replace(location.origin + '/');
+    }
+  }
   let lastSmall = 0, lastAway = 0, lastTouch = 0, ourExitAt = 0;
   let lastExit = null, restore = null, hint = null, lastFsEl = null, fsEnterAt = 0;
 
@@ -489,11 +509,24 @@
   let lastFrame = 0;
   function beat(now) {
     const t = Date.now();
+    if (onYouTube() && t - lastUsedMark > 5000) {
+      if (t - lastUsed() > IDLE_HOME_MIN * 60000 && lastUsed()) idleHome();
+      markUsed(t);
+      lastUsedMark = t;
+    }
     if (lastFrame && t - lastFrame > 1200) { lastAway = t; if (restore) restore.sure = true; dbg('away detected (' + Math.round((t - lastFrame) / 100) / 10 + 's gap)'); }
     lastFrame = t;
     requestAnimationFrame(beat);
   }
   if (IS_TOP) requestAnimationFrame(beat);
+
+  // Back after Firefox sat unused (the car was off, or a long time in CarPlay): YouTube Home.
+  function idleHome() {
+    dbg('unused for ' + IDLE_HOME_MIN + '+ min: going to YouTube Home', true);
+    clearRestore();
+    if (location.pathname !== '/') goHome();
+    requestCarTap('wake');
+  }
 
   function hideHint() { if (hint) { hint.remove(); hint = null; } }
   function clearRestore() { restore = null; hideHint(); }
@@ -666,20 +699,65 @@
   // "✕ Close", so opening the strip by accident never plays anything.
   // Set SEEK_PICKER to false to turn this off.
   const SEEK_PICKER = true;
+  function onWatchPage() { return location.pathname === '/watch' || location.pathname.startsWith('/shorts/'); }
+  function onYouTube() { return /(^|\.)youtube\.com$/.test(location.hostname); }
+  let videoStarted = false, pendingWatch = null;
+
+  // Going to YouTube Home without a full page load when possible, so the wheel keeps working.
+  function goHome() {
+    if (picker) closePicker();
+    if (!onYouTube()) { location.assign('https://m.youtube.com/'); return; }
+    keepWheelAlive();
+    if (location.pathname === '/') { scrollTo(0, 0); return; }
+    if (fullscreenElement()) { clearRestore(); ourExitAt = Date.now(); exitFullscreen(); }
+    const link = [...document.querySelectorAll('a[href]')].find((a) => {
+      try { const u = new URL(a.href, location.href); return u.origin === location.origin && u.pathname === '/' && !u.search; } catch (_) { return false; }
+    });
+    if (link) link.click(); else location.assign(location.origin + '/');
+  }
+
+  // Away from a playing video the car only sends its buttons while Firefox makes a sound,
+  // so the near-silent keep-alive plays while browsing YouTube.
+  function keepWheelAlive() {
+    if (!IS_TOP || !onYouTube()) return;
+    const v = biggestVideo();
+    if (v && !v.paused && !v.muted && onWatchPage()) return;
+    if (keepAlive && !keepAlive.paused) return;
+    startKeepAlive();
+  }
+
+  // A video chosen with the wheel outside fullscreen: once its page is up, ask for the
+  // MacroDroid tap that starts it in fullscreen.
+  function watchWhenReady() {
+    const w = pendingWatch;
+    if (!w) return;
+    if (Date.now() > w.until || fullscreenElement()) { pendingWatch = null; return; }
+    const box = videoIdOf(location.href) === w.id ? playerElement() : null;
+    if (box && box.getBoundingClientRect().height > 100) { pendingWatch = null; requestCarTap(); return; }
+    setTimeout(watchWhenReady, 200);
+  }
   let claiming = false;
-  const PICK_DELAY = 3000, MAX_PICKS = 12;
+  const PICK_DELAY = 3000, MAX_PICKS = 12, MAX_BROWSE = 20;
   let picker = null;
 
-  function suggestions() {
+  // Links inside hidden menus/templates don't count (they aren't on the page).
+  function isShown(a) {
+    if (!a.getClientRects().length) return false;
+    const r = a.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  }
+
+  function suggestions(max, skip) {
     const current = videoIdOf(location.href);
     const byId = new Map();
     for (const a of document.querySelectorAll('a[href*="/watch"]')) {
       const id = videoIdOf(a.href);
-      if (!id || id === current) continue;
+      if (!id || id === current || (skip && skip.has(id))) continue;
+      if (!isShown(a)) continue;
       let item = byId.get(id);
       if (!item) {
-        if (byId.size >= MAX_PICKS) continue;
-        item = { id, link: a, title: '', img: '' };
+        if (byId.size >= (max || MAX_PICKS)) continue;
+        item = { kind: 'video', id, link: a, title: '', img: '' };
         byId.set(id, item);
       }
       const text = (a.getAttribute('aria-label') || a.getAttribute('title') || a.textContent || '').replace(/\s+/g, ' ').trim();
@@ -731,7 +809,12 @@
     clearTimeout(keepAliveTimer);
     if (keepAlive) { try { keepAlive.pause(); } catch (_) {} keepAlive = null; }
   }
-  document.addEventListener('play', (e) => { if (e.target !== keepAlive && e.target.tagName === 'VIDEO') stopKeepAlive(); }, true);
+  document.addEventListener('play', (e) => {
+    const v = e.target;
+    if (v === keepAlive || v.tagName !== 'VIDEO' || v.muted || !v.volume || !onWatchPage()) return;
+    videoStarted = true;
+    stopKeepAlive();
+  }, true);
 
   // ---- Live streams: resuming always jumps to live (never behind) ----
   function ytPlayer() {
@@ -812,8 +895,17 @@
     const p = picker;
     if (!p) return;
     const item = p.items[i];
+    const shown = p.shown;
     closePicker();
-    if (item) { dbg('playing ' + item.id); item.link.click(); }
+    if (!item || item.kind === 'close') return;
+    if (item.kind === 'nav') { dbg('wheel: ' + item.label); item.run(shown); return; }
+    dbg('playing ' + item.id);
+    if (!fullscreenElement()) {
+      keepWheelAlive();
+      pendingWatch = { id: item.id, until: Date.now() + 10000 };
+      setTimeout(watchWhenReady, 300);
+    }
+    item.link.click();
   }
 
   function drawPicker() {
@@ -828,12 +920,34 @@
     const left = t.offsetLeft - (p.row.clientWidth - t.offsetWidth) / 2;
     p.row.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
     clearTimeout(p.timer);
-    p.timer = setTimeout(() => { if (p.sel === 0) closePicker(); else choose(p.sel - 1); }, PICK_DELAY);
+    p.timer = setTimeout(() => choose(p.sel), PICK_DELAY);
   }
 
-  function openPicker() {
-    const items = suggestions();
-    if (!items.length) { dbg('seek ▲: no suggested videos found', true); return; }
+  // The tiles: ✕ Close first (opening by accident never does anything), then 🏠 Home
+  // (left out when already on Home), then the videos: suggestions on a video page,
+  // the feed / results anywhere else on YouTube, with "More videos" at the end there.
+  function pickerItems(skip, more) {
+    const close = { kind: 'close', label: '✕  Close' };
+    const home = { kind: 'nav', label: '🏠  Home', run: () => goHome() };
+    if (onWatchPage()) return [close, home, ...suggestions(MAX_PICKS)];
+    const head = more || location.pathname === '/' ? [close] : [close, home];
+    const videos = suggestions(MAX_BROWSE, skip);
+    return [...head, ...videos, { kind: 'nav', label: '▶  More videos', run: (shown) => showMore(shown) }];
+  }
+
+  // "More videos": scroll the page so YouTube loads the next ones, then open the box on them.
+  function showMore(shown) {
+    keepWheelAlive();
+    const last = shown && shown.lastLink;
+    if (last && last.isConnected) last.scrollIntoView({ block: 'start' }); else scrollBy(0, innerHeight * 2);
+    setTimeout(() => openPicker(shown ? shown.ids : null, true), 1500);
+  }
+
+  function openPicker(skip, more) {
+    const items = pickerItems(skip, more);
+    const ids = new Set(skip || []);
+    let lastLink = null;
+    for (const it of items) if (it.kind === 'video') { ids.add(it.id); lastLink = it.link; }
     const box = document.createElement('div');
     box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:linear-gradient(transparent,rgba(0,0,0,.85) 25%);' +
       'padding:40px 0 6px;font:600 17px/1.25 sans-serif;color:#fff;';
@@ -843,33 +957,33 @@
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:22px;overflow-x:auto;padding:14px 28px;scrollbar-width:none;';
     const tiles = [];
-    const close = document.createElement('div');
-    close.textContent = '✕  Close';
-    close.style.cssText = 'flex:0 0 180px;border-radius:12px;background:#333;display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer;';
-    close.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); });
-    row.appendChild(close);
-    tiles.push(close);
     items.forEach((it, i) => {
       const t = document.createElement('div');
-      t.style.cssText = 'flex:0 0 280px;border-radius:12px;overflow:hidden;background:#222;transition:transform .15s;cursor:pointer;';
-      const img = document.createElement('img');
-      img.src = it.img;
-      img.style.cssText = 'display:block;width:280px;height:158px;object-fit:cover;background:#111;';
-      const cap = document.createElement('div');
-      cap.textContent = it.title || 'Video';
-      cap.style.cssText = 'padding:8px 10px;height:42px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;';
-      t.append(img, cap);
+      if (it.kind === 'video') {
+        t.style.cssText = 'flex:0 0 280px;border-radius:12px;overflow:hidden;background:#222;transition:transform .15s;cursor:pointer;';
+        const img = document.createElement('img');
+        img.src = it.img;
+        img.style.cssText = 'display:block;width:280px;height:158px;object-fit:cover;background:#111;';
+        const cap = document.createElement('div');
+        cap.textContent = it.title || 'Video';
+        cap.style.cssText = 'padding:8px 10px;height:42px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;';
+        t.append(img, cap);
+      } else {
+        t.textContent = it.label;
+        t.style.cssText = 'flex:0 0 180px;min-height:208px;border-radius:12px;background:#333;display:flex;align-items:center;justify-content:center;' +
+          'text-align:center;font-size:22px;cursor:pointer;transition:transform .15s;';
+      }
       t.addEventListener('click', (e) => { e.stopPropagation(); if (picker) choose(i); });
       row.appendChild(t);
       tiles.push(t);
     });
     box.append(hint, row);
     (fullscreenElement() || document.body).appendChild(box);
-    picker = { box, row, tiles, items, sel: 0, timer: 0 };
+    picker = { box, row, tiles, items, sel: 0, timer: 0, shown: { ids, lastLink } };
     drawPicker();
   }
 
-  // Seek ▲ opens the strip and moves the box forward.
+  // Seek ▲ opens the box and moves it forward.
   function onSeekNext() {
     dbg('car media command: nexttrack (seek ▲)');
     if (picker && !picker.box.isConnected) closePicker();
@@ -877,12 +991,14 @@
     picker.sel = (picker.sel + 1) % picker.tiles.length;
     drawPicker();
   }
-  // Seek ▼ is the OK button: with the strip open it chooses the boxed tile right away;
-  // otherwise it plays the video in fullscreen (or pauses/plays when already fullscreen).
+  // Seek ▼ is the OK button: with the box open it chooses the boxed tile right away.
+  // On a video page it is otherwise play/pause (playing also goes fullscreen);
+  // anywhere else on YouTube (Home, results...) it opens the box.
   function onSeekPrev() {
     dbg('car media command: previoustrack (seek ▼)');
     if (picker && !picker.box.isConnected) closePicker();
-    if (picker) { const sel = picker.sel; if (sel === 0) closePicker(); else choose(sel - 1); return; }
+    if (picker) { choose(picker.sel); return; }
+    if (!onWatchPage()) { openPicker(); return; }
     playFullscreen();
   }
 
@@ -909,15 +1025,59 @@
   // ---- Opening or reloading a YouTube video page: play it in fullscreen without touching ----
   // Set to false to turn this off.
   const AUTO_START = true;
-  if (AUTO_START && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && location.pathname === '/watch') {
-    let tries = 0;
+  // If the video still sits on its play button (the first tap was missed), ask again every
+  // 7 seconds, up to 4 more times. The wheel can't help there: the car sends no buttons
+  // while nothing makes a sound.
+  if (AUTO_START && IS_TOP && !leavingForHome && onYouTube() && location.pathname === '/watch') {
+    let tries = 0, asks = 0;
+    const stuck = () => {
+      if (videoStarted || fullscreenElement() || !onWatchPage() || document.visibilityState !== 'visible') return false;
+      const v = biggestVideo();
+      return !v || v.paused;
+    };
+    const ask = () => {
+      if (!stuck() || carTap) return;
+      dbg('page loaded: asking for the fullscreen tap');
+      requestCarTap();
+      if (++asks <= 4) setTimeout(ask, 7000);
+    };
     const check = () => {
       if (fullscreenElement() || ++tries > 40) return;
       const box = document.visibilityState === 'visible' ? playerElement() : null;
-      if (box && box.getBoundingClientRect().height > 100) { dbg('page loaded: asking for the fullscreen tap'); requestCarTap(); return; }
+      if (box && box.getBoundingClientRect().height > 100) { ask(); return; }
       setTimeout(check, 250);
     };
     addEventListener('load', () => setTimeout(check, 1500));
+  }
+
+  // Any other YouTube page loaded from scratch (Home after starting the car, for example):
+  // one MacroDroid tap turns the wheel on. The tap itself never reaches the page.
+  if (SEEK_PICKER && IS_TOP && !leavingForHome && onYouTube() && !onWatchPage()) requestCarTap('wake');
+
+  // Keep the wheel alive while browsing YouTube: when a page that isn't a video shows up
+  // (Back, Home, a channel...), start the near-silent sound if the page has been touched before.
+  if (SEEK_PICKER && IS_TOP && onYouTube()) {
+    let lastPath = location.pathname + location.search;
+    setInterval(() => {
+      const path = location.pathname + location.search;
+      if (path === lastPath) return;
+      lastPath = path;
+      if (picker && !picker.box.isConnected) closePicker();
+      const ua = navigator.userActivation;
+      if (!onWatchPage() && document.visibilityState === 'visible' && (!ua || ua.hasBeenActive)) keepWheelAlive();
+    }, 1000);
+    // A touch or touchpad click while browsing also turns the wheel on.
+    addEventListener('pointerup', (e) => { if (e.isTrusted && !onWatchPage()) keepWheelAlive(); }, true);
+    // Keyboard: H = YouTube Home (not while typing in a box).
+    addEventListener('keydown', (e) => {
+      if (e.key !== 'h' && e.key !== 'H') return;
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const t = e.target;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      goHome();
+    }, true);
   }
 
   if (SEEK_PICKER && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && 'mediaSession' in navigator) {
@@ -948,9 +1108,9 @@
       try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('previoustrack', onSeekPrev); } catch (_) {}
       // The car may send play / pause / stop instead (for example while the video is paused).
-      try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); const v = biggestVideo(); if (!v || v.paused) playFullscreen(); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); if (!onWatchPage()) return; const v = biggestVideo(); if (!v || v.paused) playFullscreen(); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); if (!onWatchPage()) return; const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); if (!onWatchPage()) return; const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
       claiming = false;
     };
     claim();
