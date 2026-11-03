@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.21
+// @version      5.22
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -748,9 +748,13 @@
 
   // Links inside hidden menus/templates don't count (they aren't on the page).
   function isShown(a) {
-    if (!a.getClientRects().length) return false;
-    const r = a.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    // YouTube's thumbnail links can be display:contents (no box of their own): use what's inside.
+    for (const el of [a, a.firstElementChild, a.parentElement]) {
+      if (!el || !el.getClientRects().length) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return true;
+    }
+    return false;
   }
 
   function suggestions(max, skip) {
@@ -1000,12 +1004,13 @@
     const seen = new Set(), out = [];
     for (const a of document.querySelectorAll('a[href*="/watch"]')) {
       const id = videoIdOf(a.href);
-      if (!id || seen.has(id) || !isShown(a)) continue;
-      const r = a.getBoundingClientRect();
-      if (r.width < 120 || r.height < 60) continue;             // the thumbnail link, not the title text
-      if (a.closest('[hidden], [aria-hidden="true"]')) continue;
+      if (!id || seen.has(id)) continue;
+      if (hl && hl.frame.contains(a)) continue;
+      // The video's card (thumbnail + title); YouTube's own card element when there is one.
+      const card = a.closest('ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-media-item, ytm-reel-item-renderer, ytd-rich-item-renderer, ytd-video-renderer') || a;
+      const r = card.getBoundingClientRect();
+      if (r.width < 120 || r.height < 60) continue;               // hidden, or just a small text link
       seen.add(id);
-      const card = a.closest('ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-media-item, ytd-rich-item-renderer') || a;
       out.push({ id, link: a, card });
     }
     return out;
