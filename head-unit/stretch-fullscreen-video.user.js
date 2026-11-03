@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.13
+// @version      5.14
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -430,6 +430,27 @@
   const swallow = (e) => { if (e.isTrusted && Date.now() < swallowClicksUntil) { e.stopPropagation(); if (e.cancelable) e.preventDefault(); } };
   addEventListener('click', swallow, true);
   addEventListener('dblclick', swallow, true);
+
+  // Touchpad / mouse: double-click the middle third of a video = fullscreen on/off, same as the
+  // double-tap (a double-click from a touch is already handled above and ignored here).
+  addEventListener('dblclick', (e) => {
+    if (!e.isTrusted || Date.now() - lastTouch < 1000) return;
+    const fs = fullscreenElement();
+    const v = fs ? (lastStretched && lastStretched.isConnected ? lastStretched : biggestVideo()) : videoAt(e.clientX, e.clientY);
+    if (!v) return;
+    const r = fs ? { left: 0, width: innerWidth } : v.getBoundingClientRect();
+    e.stopPropagation();
+    if (e.cancelable) e.preventDefault();
+    // Left third = back 10s, right third = forward 10s (done here so it never double-skips).
+    const side = e.clientX < r.left + r.width / 3 ? -10 : e.clientX > r.left + r.width * 2 / 3 ? 10 : 0;
+    if (side) {
+      const end = isFinite(v.duration) ? v.duration - 0.5 : Infinity;
+      v.currentTime = Math.max(0, Math.min(end, v.currentTime + side));
+      return;
+    }
+    if (fs) { clearRestore(); ourExitAt = Date.now(); exitFullscreen(); }
+    else goFullscreen(v);
+  }, true);
 
   // Returning to fullscreen after the mini player (picture-in-picture).
   // Browsers don't allow going back to fullscreen without a tap, so a pill offers it.
