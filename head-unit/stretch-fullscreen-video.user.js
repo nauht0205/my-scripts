@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.3
+// @version      5.4
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen; the steering-wheel seek-up button moves a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
@@ -326,7 +326,7 @@
   }
 
   // Temporary on-screen log (bottom-left) to see what happens when switching apps. Set to false to hide.
-  const DEBUG = false;
+  const DEBUG = true;   // TEMPORARY: car-button test (v5.4)
   let dbgBox = null, dbgTimer = 0;
   function dbg(msg, always) {
     if ((!DEBUG && !always) || !IS_TOP || !document.body) return;
@@ -618,11 +618,24 @@
   }
 
   function onSeekNext() {
-    dbg('seek ▲ received');
+    dbg('car media command: nexttrack (seek ▲)');
     if (picker && !picker.box.isConnected) closePicker();
     if (!picker) { openPicker(); return; }
     picker.sel = (picker.sel + 1) % picker.tiles.length;
     drawPicker();
+  }
+
+  // TEMPORARY car-button test: log every media command, key and play/pause the page receives.
+  if (DEBUG && IS_TOP) {
+    addEventListener('keydown', (e) => dbg('key: ' + e.key + ' / ' + e.code + ' (' + e.keyCode + ')'), true);
+    document.addEventListener('pause', (e) => { if (e.target.tagName === 'VIDEO') dbg('video paused'); }, true);
+    document.addEventListener('play', (e) => { if (e.target.tagName === 'VIDEO') dbg('video playing'); }, true);
+    document.addEventListener('volumechange', (e) => { if (e.target.tagName === 'VIDEO') dbg('volume/mute changed'); }, true);
+    if ('mediaSession' in navigator) {
+      for (const action of ['previoustrack', 'seekbackward', 'seekforward', 'stop', 'skipad']) {
+        try { navigator.mediaSession.setActionHandler(action, () => dbg('car media command: ' + action)); } catch (_) {}
+      }
+    }
   }
 
   if (SEEK_PICKER && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && 'mediaSession' in navigator) {
