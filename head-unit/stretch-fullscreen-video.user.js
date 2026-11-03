@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.6
+// @version      5.7
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen; the steering-wheel seek buttons move a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); the steering-wheel seek buttons move a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -182,6 +182,81 @@
   setInterval(tick, 250);
 
   // ---- Gestures ----
+
+  // ---- MacroDroid tap: play + fullscreen without touching ----
+  // Browsers only allow fullscreen (and starting a video with sound) right after a real touch.
+  // When the script needs one, it shows "Going fullscreen…" in the middle of the screen; a MacroDroid
+  // macro (Screen Content trigger on that text) taps the screen, and the script uses that tap to
+  // start the video and go fullscreen. The tap itself never reaches the page.
+  const CAR_TAP_TEXT = 'Going fullscreen…';
+  let carTap = null;
+
+  function cancelCarTap() {
+    if (!carTap) return;
+    clearTimeout(carTap.timer);
+    carTap.el.remove();
+    carTap = null;
+  }
+
+  function requestCarTap() {
+    if (window !== window.top || !document.body) return;
+    cancelCarTap();
+    const el = document.createElement('div');
+    el.textContent = '⛶  ' + CAR_TAP_TEXT;
+    el.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:2147483647;' +
+      'background:rgba(0,0,0,.85);color:#fff;font:700 26px/1.2 sans-serif;padding:18px 30px;border-radius:30px;' +
+      'border:2px solid rgba(255,255,255,.6);pointer-events:none;';
+    (fullscreenElement() || document.body).appendChild(el);
+    carTap = { el, pressed: false, timer: setTimeout(cancelCarTap, 6000) };
+  }
+
+  // The YouTube player (or any player), even before its video has loaded.
+  function playerElement() {
+    const v = biggestVideo();
+    if (v && v.getBoundingClientRect().height > 100) return playerBox(v);
+    let best = null, area = 0;
+    for (const el of document.querySelectorAll('#player-container-id, #movie_player, .html5-video-player, ytm-player, #player, .player-container')) {
+      const r = el.getBoundingClientRect();
+      if (r.width * r.height > area) { best = el; area = r.width * r.height; }
+    }
+    return area > 20000 ? best : null;
+  }
+
+  function startPlayback() {
+    const v = biggestVideo();
+    if (v && !v.paused) return;
+    if (v && v.readyState > 0) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} return; }
+    // Only the thumbnail with its ▶ is showing: press the player's own play overlay.
+    const box = playerElement();
+    if (!box) return;
+    const r = box.getBoundingClientRect();
+    const target = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    if (target && (box.contains(target) || target.contains(box))) target.click();
+  }
+
+  function useCarTap() {
+    cancelCarTap();
+    startPlayback();
+    if (fullscreenElement()) return;
+    const v = biggestVideo();
+    if (v && v.getBoundingClientRect().height > 100) { goFullscreen(v); return; }
+    const box = playerElement();
+    if (box && box.requestFullscreen) { try { const p = box.requestFullscreen(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
+  }
+
+  addEventListener('touchstart', (e) => {
+    if (!carTap) return;
+    carTap.pressed = true;
+    if (e.cancelable) e.preventDefault();
+    e.stopImmediatePropagation();
+  }, { capture: true, passive: false });
+  addEventListener('touchend', (e) => {
+    if (!carTap || !carTap.pressed) return;
+    if (e.cancelable) e.preventDefault();
+    e.stopImmediatePropagation();
+    useCarTap();
+  }, { capture: true, passive: false });
+
 
   // Players' own fullscreen buttons (YouTube mobile/desktop, video.js, JW Player, Plyr, and generic labels).
   const FS_BUTTONS = [
@@ -549,6 +624,15 @@
     return [...byId.values()];
   }
 
+  // Second tile: outside fullscreen, ask MacroDroid for the tap that starts fullscreen;
+  // in fullscreen, pause or play the video (that needs no tap).
+  function fullscreenTile() {
+    if (!fullscreenElement()) { requestCarTap(); return; }
+    const v = biggestVideo();
+    if (!v) return;
+    if (v.paused) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} } else v.pause();
+  }
+
   function closePicker() {
     if (!picker) return;
     clearTimeout(picker.timer);
@@ -576,7 +660,11 @@
     const left = t.offsetLeft - (p.row.clientWidth - t.offsetWidth) / 2;
     p.row.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
     clearTimeout(p.timer);
-    p.timer = setTimeout(() => { if (p.sel === 0) closePicker(); else choose(p.sel - 1); }, PICK_DELAY);
+    p.timer = setTimeout(() => {
+      if (p.sel === 0) closePicker();
+      else if (p.sel === 1) { closePicker(); fullscreenTile(); }
+      else choose(p.sel - 2);
+    }, PICK_DELAY);
   }
 
   function openPicker() {
@@ -597,6 +685,12 @@
     close.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); });
     row.appendChild(close);
     tiles.push(close);
+    const fsTile = document.createElement('div');
+    fsTile.textContent = fullscreenElement() ? '⏯  Pause / play' : '⛶  Fullscreen + play';
+    fsTile.style.cssText = close.style.cssText + 'flex-basis:220px;background:#1f4f8f;';
+    fsTile.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); useCarTap(); });
+    row.appendChild(fsTile);
+    tiles.push(fsTile);
     items.forEach((it, i) => {
       const t = document.createElement('div');
       t.style.cssText = 'flex:0 0 280px;border-radius:12px;overflow:hidden;background:#222;transition:transform .15s;cursor:pointer;';
@@ -647,6 +741,20 @@
       document.addEventListener('play', claimTest, true);
       setTimeout(() => dbg('car-button test ready: press the buttons now'), 3000);
     }
+  }
+
+  // ---- Opening or reloading a YouTube video page: play it in fullscreen without touching ----
+  // Set to false to turn this off.
+  const AUTO_START = true;
+  if (AUTO_START && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && location.pathname === '/watch') {
+    let tries = 0;
+    const check = () => {
+      if (fullscreenElement() || ++tries > 40) return;
+      const box = document.visibilityState === 'visible' ? playerElement() : null;
+      if (box && box.getBoundingClientRect().height > 100) { dbg('page loaded: asking for the fullscreen tap'); requestCarTap(); return; }
+      setTimeout(check, 250);
+    };
+    addEventListener('load', () => setTimeout(check, 1500));
   }
 
   if (SEEK_PICKER && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && 'mediaSession' in navigator) {

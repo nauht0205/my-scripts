@@ -12,3 +12,10 @@ Userscripts (Tampermonkey / Violentmonkey). Each one updates itself from this re
 | Stretch Fullscreen Video (car head unit, Violentmonkey in Firefox) | [head-unit/stretch-fullscreen-video.user.js](https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js) |
 
 No keys are stored here. Pushover keys live in Tampermonkey on each computer.
+
+## Head unit MacroDroid macros
+
+Import in MacroDroid: AI Macro Builder > Use Externally > paste the JSON response.
+
+- [head-unit/macrodroid-audio-switch.json](https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/macrodroid-audio-switch.json): AUDIO button flips Firefox and CarPlay, then taps to restore fullscreen.
+- [head-unit/macrodroid-fullscreen-tap.json](https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/macrodroid-fullscreen-tap.json): taps the screen when the script shows "Going fullscreen".
