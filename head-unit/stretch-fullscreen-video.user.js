@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.0
+// @version      5.2
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen; the steering-wheel seek-up button moves a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -516,4 +516,119 @@
     autoFs = { id, until: Date.now() + 4500 };
     if (first) setTimeout(autoFsStep, 100);
   }, true);
+
+  // ---- Steering-wheel seek ▲ (media "next"): pick a suggested YouTube video without touching ----
+  // The car sends seek ▲ to whichever app is playing, as a media "next track" command.
+  // Each press shows a strip of suggested videos and moves the highlight box one step;
+  // after a few seconds with no press, the boxed video plays. The last tile closes the strip.
+  // Set SEEK_PICKER to false to turn this off.
+  const SEEK_PICKER = true;
+  const PICK_DELAY = 3000, MAX_PICKS = 12;
+  let picker = null;
+
+  function suggestions() {
+    const current = videoIdOf(location.href);
+    const byId = new Map();
+    for (const a of document.querySelectorAll('a[href*="/watch"]')) {
+      const id = videoIdOf(a.href);
+      if (!id || id === current) continue;
+      let item = byId.get(id);
+      if (!item) {
+        if (byId.size >= MAX_PICKS) continue;
+        item = { id, link: a, title: '', img: '' };
+        byId.set(id, item);
+      }
+      const text = (a.getAttribute('aria-label') || a.getAttribute('title') || a.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text.length > item.title.length) item.title = text;
+      const img = a.querySelector('img');
+      const src = img && (img.currentSrc || img.src);
+      if (!item.img && src && /^https?:/.test(src)) item.img = src;
+    }
+    for (const item of byId.values()) if (!item.img) item.img = 'https://i.ytimg.com/vi/' + item.id + '/mqdefault.jpg';
+    return [...byId.values()];
+  }
+
+  function closePicker() {
+    if (!picker) return;
+    clearTimeout(picker.timer);
+    picker.box.remove();
+    picker = null;
+  }
+
+  function choose(i) {
+    const p = picker;
+    if (!p) return;
+    const item = p.items[i];
+    closePicker();
+    if (item) { dbg('playing ' + item.id); item.link.click(); }
+  }
+
+  function drawPicker() {
+    const p = picker;
+    p.tiles.forEach((t, i) => {
+      const on = i === p.sel;
+      t.style.outline = on ? '5px solid #fff' : 'none';
+      t.style.opacity = on ? '1' : '.6';
+      t.style.transform = on ? 'scale(1.06)' : 'none';
+    });
+    const t = p.tiles[p.sel];
+    const left = t.offsetLeft - (p.row.clientWidth - t.offsetWidth) / 2;
+    p.row.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
+    clearTimeout(p.timer);
+    p.timer = setTimeout(() => { if (p.sel >= p.items.length) closePicker(); else choose(p.sel); }, PICK_DELAY);
+  }
+
+  function openPicker() {
+    const items = suggestions();
+    if (!items.length) { dbg('seek ▲: no suggested videos found', true); return; }
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:linear-gradient(transparent,rgba(0,0,0,.85) 25%);' +
+      'padding:40px 0 6px;font:600 17px/1.25 sans-serif;color:#fff;';
+    const hint = document.createElement('div');
+    hint.textContent = 'Seek ▲ = next  ·  wait 3 s = play';
+    hint.style.cssText = 'padding:0 28px 10px;font-size:15px;opacity:.8;';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:22px;overflow-x:auto;padding:14px 28px;scrollbar-width:none;';
+    const tiles = [];
+    items.forEach((it, i) => {
+      const t = document.createElement('div');
+      t.style.cssText = 'flex:0 0 280px;border-radius:12px;overflow:hidden;background:#222;transition:transform .15s;cursor:pointer;';
+      const img = document.createElement('img');
+      img.src = it.img;
+      img.style.cssText = 'display:block;width:280px;height:158px;object-fit:cover;background:#111;';
+      const cap = document.createElement('div');
+      cap.textContent = it.title || 'Video';
+      cap.style.cssText = 'padding:8px 10px;height:42px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;';
+      t.append(img, cap);
+      t.addEventListener('click', (e) => { e.stopPropagation(); if (picker) choose(i); });
+      row.appendChild(t);
+      tiles.push(t);
+    });
+    const close = document.createElement('div');
+    close.textContent = '✕  Close';
+    close.style.cssText = 'flex:0 0 180px;border-radius:12px;background:#333;display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer;';
+    close.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); });
+    row.appendChild(close);
+    tiles.push(close);
+    box.append(hint, row);
+    (fullscreenElement() || document.body).appendChild(box);
+    picker = { box, row, tiles, items, sel: 0, timer: 0 };
+    drawPicker();
+  }
+
+  function onSeekNext() {
+    dbg('seek ▲ received');
+    if (picker && !picker.box.isConnected) closePicker();
+    if (!picker) { openPicker(); return; }
+    picker.sel = (picker.sel + 1) % picker.tiles.length;
+    drawPicker();
+  }
+
+  if (SEEK_PICKER && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && 'mediaSession' in navigator) {
+    const claim = () => { try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {} };
+    claim();
+    // YouTube sets its own media handlers when a video loads, so keep claiming the button.
+    setInterval(claim, 2000);
+    document.addEventListener('play', claim, true);
+  }
 })();
