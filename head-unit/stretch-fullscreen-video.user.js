@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.12
+// @version      5.13
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
@@ -239,6 +239,7 @@
     if (typeof stopKeepAlive === 'function') stopKeepAlive();
     startPlayback();
     if (fullscreenElement()) return;
+    fsGuard = { until: Date.now() + 3000 };
     const v = biggestVideo();
     if (v && v.getBoundingClientRect().height > 100) { goFullscreen(v); return; }
     const box = playerElement();
@@ -290,12 +291,54 @@
   }
 
   // Must be called from inside a tap, because browsers only allow fullscreen after a user action.
+  // After the script starts fullscreen, the player sometimes switches it straight off again
+  // (YouTube does this when it still thinks it is fullscreen from before, e.g. after Back).
+  // For a moment after the MacroDroid tap starts fullscreen, the page isn't allowed to leave it
+  // (the script's own exits and your touches still work).
+  let fsGuard = null, ownExit = false;
+  function pageMayExit() {
+    const g = fsGuard;
+    if (ownExit || !g || Date.now() > g.until || Date.now() - lastTouch < 400) return true;
+    dbg('kept fullscreen: the page tried to leave it');
+    return false;
+  }
+  (function guardExit() {
+    const names = ['exitFullscreen', 'webkitExitFullscreen', 'mozCancelFullScreen'];
+    // Page context (Violentmonkey "page" mode) ...
+    const pageWin = window.wrappedJSObject;
+    if (!pageWin) {
+      for (const name of names) {
+        const orig = Document.prototype[name];
+        if (typeof orig !== 'function') continue;
+        Document.prototype[name] = function () { return pageMayExit() ? orig.apply(this, arguments) : Promise.resolve(); };
+      }
+      return;
+    }
+    // ... or Firefox content-script mode: patch the page's own Document through the sandbox.
+    try {
+      const P = pageWin.Document.prototype;
+      for (const name of names) {
+        const orig = P[name];
+        if (typeof orig !== 'function') continue;
+        exportFunction(function () {
+          if (pageMayExit()) return orig.apply(this, arguments);
+          return new pageWin.Promise((res) => res());
+        }, P, { defineAs: name });
+      }
+    } catch (_) {}
+  })();
+
   function goFullscreen(v) {
     if (fullscreenElement() || !v || !v.isConnected) return;
-    // Prefer the player's own button so its controls switch to fullscreen layout too.
+    // Prefer the player's own button so its controls switch to fullscreen layout too,
+    // unless the player thinks it is already fullscreen (its button says "exit").
     for (let a = v.parentElement, i = 0; a && i < 8; a = a.parentElement, i++) {
       const btn = a.querySelector(FS_BUTTONS);
-      if (btn) { btn.click(); break; }
+      if (btn) {
+        const label = (btn.getAttribute('aria-label') || btn.getAttribute('title') || '') + ' ' + (btn.className || '');
+        if (!/exit|leave|thoát/i.test(label)) btn.click();
+        break;
+      }
     }
     // If the button didn't do it, make the player box fullscreen ourselves.
     setTimeout(() => {
@@ -325,7 +368,9 @@
   function exitFullscreen() {
     const d = document;
     const fn = d.exitFullscreen || d.webkitExitFullscreen || d.mozCancelFullScreen;
+    ownExit = true;
     if (fn) { try { const r = fn.call(d); if (r && r.catch) r.catch(() => {}); } catch (_) {} }
+    ownExit = false;
   }
 
   // Only the middle third of the video counts, so the left and right thirds keep the
@@ -482,7 +527,7 @@
     if (document.hidden || !IS_TOP) return;
     setTimeout(() => {
       if (!document.hidden && fullscreenElement() && lastAway > fsEnterAt && innerHeight < screen.height * 0.9) {
-        try { const p = document.exitFullscreen(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+        exitFullscreen();
       }
     }, 700);
   });
