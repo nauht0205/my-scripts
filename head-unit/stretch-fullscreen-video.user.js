@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.16
+// @version      5.17
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -488,7 +488,7 @@
   }
 
   // Temporary on-screen log (bottom-left) to see what happens when switching apps. Set to false to hide.
-  const DEBUG = false;
+  const DEBUG = true; // TEMP: on-screen log to find why ▲ does nothing on YouTube Home
   let dbgBox = null, dbgTimer = 0;
   function dbg(msg, always) {
     if ((!DEBUG && !always) || !IS_TOP || !document.body) return;
@@ -707,12 +707,15 @@
   function goHome() {
     if (picker) closePicker();
     if (!onYouTube()) { location.assign('https://m.youtube.com/'); return; }
-    keepWheelAlive();
+    // Start the near-silent sound now, while the video still plays: once YouTube stops the
+    // video on Home, there is no new tap to allow a sound to start.
+    if (!(keepAlive && !keepAlive.paused)) startKeepAlive();
     if (location.pathname === '/') { scrollTo(0, 0); return; }
     if (fullscreenElement()) { clearRestore(); ourExitAt = Date.now(); exitFullscreen(); }
     const link = [...document.querySelectorAll('a[href]')].find((a) => {
       try { const u = new URL(a.href, location.href); return u.origin === location.origin && u.pathname === '/' && !u.search; } catch (_) { return false; }
     });
+    dbg(link ? 'Home: opening' : 'Home: no Home link, full page load', true);
     if (link) link.click(); else location.assign(location.origin + '/');
   }
 
@@ -1063,8 +1066,8 @@
       if (path === lastPath) return;
       lastPath = path;
       if (picker && !picker.box.isConnected) closePicker();
-      const ua = navigator.userActivation;
-      if (!onWatchPage() && document.visibilityState === 'visible' && (!ua || ua.hasBeenActive)) keepWheelAlive();
+      dbg('page: ' + path);
+      if (!onWatchPage() && document.visibilityState === 'visible') keepWheelAlive();
     }, 1000);
     // A touch or touchpad click while browsing also turns the wheel on.
     addEventListener('pointerup', (e) => { if (e.isTrusted && !onWatchPage()) keepWheelAlive(); }, true);
@@ -1116,6 +1119,14 @@
     claim();
     // YouTube sets its own media handlers when a video loads, so keep claiming the button.
     setInterval(claim, 2000);
+    // Off a video page (Home, results...) keep the near-silent sound going, so the car keeps
+    // sending ▲ / ▼ there.
+    setInterval(() => {
+      if (onWatchPage() || document.visibilityState !== 'visible') return;
+      if (keepAlive && !keepAlive.paused) return;
+      dbg('wheel: starting the near-silent sound');
+      keepWheelAlive();
+    }, 3000);
     document.addEventListener('play', claim, true);
   }
 })();
