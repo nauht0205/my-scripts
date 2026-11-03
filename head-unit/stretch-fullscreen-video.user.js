@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.18
+// @version      5.19
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -739,7 +739,6 @@
     if (box && box.getBoundingClientRect().height > 100) { pendingWatch = null; requestCarTap(); return; }
     setTimeout(watchWhenReady, 200);
   }
-  let claiming = false;
   const PICK_DELAY = 3000, MAX_PICKS = 12, MAX_BROWSE = 20;
   let picker = null;
 
@@ -1087,40 +1086,23 @@
 
   if (SEEK_PICKER && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && 'mediaSession' in navigator) {
     // YouTube re-sets its own handlers whenever the video changes state (for example right after a
-    // pause), and a press landing in that moment used to go to YouTube and do nothing. So the page
-    // isn't allowed to set these five; only the script's own handlers stay.
-    (function lockHandlers() {
-      const owned = ['nexttrack', 'previoustrack', 'play', 'pause', 'stop'];
-      const pageWin = window.wrappedJSObject;
-      try {
-        if (!pageWin) {
-          const P = MediaSession.prototype, orig = P.setActionHandler;
-          P.setActionHandler = function (action, h) {
-            if (owned.includes(action) && !claiming) return;
-            return orig.call(this, action, h);
-          };
-        } else {
-          const P = pageWin.MediaSession.prototype, orig = P.setActionHandler;
-          exportFunction(function (action, h) {
-            if (owned.includes(String(action))) return;
-            return orig.call(this, action, h);
-          }, P, { defineAs: 'setActionHandler' });
-        }
-      } catch (_) {}
-    })();
+    // pause), so the script claims the buttons back right after every such change, and every
+    // half second anyway. (5.15–5.18 blocked YouTube from setting them instead; on the unit that
+    // stopped the buttons from arriving at all.)
     const claim = () => {
-      claiming = true;
       try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('previoustrack', onSeekPrev); } catch (_) {}
       // The car may send play / pause / stop instead (for example while the video is paused).
       try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); if (!onWatchPage()) return; const v = biggestVideo(); if (!v || v.paused) playFullscreen(); }); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); if (!onWatchPage()) return; const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); if (!onWatchPage()) return; const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
-      claiming = false;
     };
     claim();
-    // YouTube sets its own media handlers when a video loads, so keep claiming the button.
-    setInterval(claim, 2000);
+    setInterval(claim, 500);
+    for (const ev of ['play', 'playing', 'pause', 'loadedmetadata', 'emptied', 'ended']) {
+      document.addEventListener(ev, () => { claim(); setTimeout(claim, 50); setTimeout(claim, 300); }, true);
+    }
+    dbg('wheel buttons claimed');
     // Off a video page (Home, results...) keep the near-silent sound going, so the car keeps
     // sending ▲ / ▼ there.
     setInterval(() => {
@@ -1133,6 +1115,5 @@
       dbg('wheel: starting the near-silent sound');
       keepWheelAlive();
     }, 3000);
-    document.addEventListener('play', claim, true);
   }
 })();
