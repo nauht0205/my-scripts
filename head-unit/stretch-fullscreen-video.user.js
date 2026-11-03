@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.11
+// @version      5.12
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
@@ -402,7 +402,7 @@
   }
 
   // Temporary on-screen log (bottom-left) to see what happens when switching apps. Set to false to hide.
-  const DEBUG = true;   // TEMPORARY (v5.9): see what the car sends while paused
+  const DEBUG = false;
   let dbgBox = null, dbgTimer = 0;
   function dbg(msg, always) {
     if ((!DEBUG && !always) || !IS_TOP || !document.body) return;
