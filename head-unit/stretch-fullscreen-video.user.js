@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.10
+// @version      5.11
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
@@ -629,26 +629,32 @@
   // in fullscreen it simply resumes; outside fullscreen it asks MacroDroid for the tap that
   // starts the video in fullscreen.
   // While a video is paused, the car stops sending its buttons to Firefox (nothing is playing).
-  // So a pause from the wheel keeps a silent sound playing; the car keeps talking to Firefox and
-  // the next press can resume. The silence stops as soon as a video plays (or after 30 minutes).
+  // So a pause from the wheel keeps a near-silent sound playing; the car keeps talking to Firefox and
+  // the next press can resume. It stops as soon as a video plays (or after 30 minutes).
+  // It can't be pure silence: Firefox treats anything below -72 dB as silent and, after a few
+  // seconds, stops counting it as playing. So the "sound" is a constant level at about -66 dB:
+  // just over Firefox's line, and a constant level (no wave at all) can't be heard.
   let keepAlive = null, keepAliveUrl = null, keepAliveTimer = 0;
   function silentWavUrl() {
     if (keepAliveUrl) return keepAliveUrl;
-    const rate = 8000, n = rate;                 // 1 second, 8 kHz, 16-bit mono, all zeros
+    const rate = 8000, n = rate * 2;             // 2 seconds, 8 kHz, 16-bit mono
     const buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf);
     const str = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
     str(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
     d.setUint32(16, 16, true); d.setUint16(20, 1, true); d.setUint16(22, 1, true);
     d.setUint32(24, rate, true); d.setUint32(28, rate * 2, true); d.setUint16(32, 2, true); d.setUint16(34, 16, true);
     str(36, 'data'); d.setUint32(40, n * 2, true);
+    for (let i = 0; i < n; i++) d.setInt16(44 + i * 2, 16, true);
     keepAliveUrl = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
     return keepAliveUrl;
   }
+  let keepAliveEl = null;
   function startKeepAlive() {
     stopKeepAlive();
     try {
-      keepAlive = new Audio(silentWavUrl());
-      keepAlive.loop = true;
+      if (!keepAliveEl) { keepAliveEl = new Audio(silentWavUrl()); keepAliveEl.loop = true; }
+      keepAlive = keepAliveEl;
+      keepAlive.currentTime = 0;
       const p = keepAlive.play();
       if (p && p.then) p.then(() => dbg('silent keep-alive playing'), (e) => dbg('keep-alive blocked: ' + (e && e.name), true));
     } catch (e) { dbg('keep-alive failed: ' + (e && e.name), true); }
