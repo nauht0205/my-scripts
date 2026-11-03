@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.24
+// @version      5.25
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -1034,8 +1034,14 @@
   }
   function drawHl() {
     if (!hl) return;
+    if (!onYouTube() || onWatchPage()) { hideHl(); return; }
+    if (!hl.item.card.isConnected) {
+      // YouTube redrew the list (e.g. while loading more): find the same video again.
+      const again = pageVideos().find((it) => it.id === hl.item.id);
+      if (!again) { hideHl(); return; }
+      hl.item = again;
+    }
     const c = hl.item.card;
-    if (!c.isConnected || !onYouTube() || onWatchPage()) { hideHl(); return; }
     const r = c.getBoundingClientRect();
     Object.assign(hl.frame.style, { left: (r.left - 6) + 'px', top: (r.top - 6) + 'px', width: (r.width + 12) + 'px', height: (r.height + 12) + 'px' });
     hl.raf = requestAnimationFrame(drawHl);
@@ -1053,6 +1059,14 @@
     let i = 0;
     if (hl) {
       const cur = items.findIndex((it) => it.id === hl.item.id);
+      if (cur >= 0 && cur + step >= items.length && step > 0 && !hl.loading) {
+        // Past the last video YouTube has drawn: scroll down so it loads more, then move on.
+        hl.loading = true;
+        dbg('loading more videos');
+        scrollBy({ top: Math.round(innerHeight * 0.8), behavior: 'smooth' });
+        setTimeout(() => { if (hl) { hl.loading = false; moveHl(step); } }, 900);
+        return;
+      }
       i = cur < 0 ? 0 : Math.min(items.length - 1, cur + step);
     } else {
       // Start on the first video that is on screen.
