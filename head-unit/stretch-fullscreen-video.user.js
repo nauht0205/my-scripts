@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.17
+// @version      5.18
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -785,7 +785,9 @@
   let keepAlive = null, keepAliveUrl = null, keepAliveTimer = 0;
   function silentWavUrl() {
     if (keepAliveUrl) return keepAliveUrl;
-    const rate = 8000, n = rate * 2;             // 2 seconds, 8 kHz, 16-bit mono
+    // 10 seconds: Firefox ignores very short sounds for media buttons (fine next to a paused
+    // video, but on YouTube Home the sound is all there is).
+    const rate = 8000, n = rate * 10;            // 10 seconds, 8 kHz, 16-bit mono
     const buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf);
     const str = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
     str(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
@@ -1123,7 +1125,11 @@
     // sending ▲ / ▼ there.
     setInterval(() => {
       if (onWatchPage() || document.visibilityState !== 'visible') return;
-      if (keepAlive && !keepAlive.paused) return;
+      if (keepAlive && !keepAlive.paused) {
+        // Tell Firefox this page is playing, so the car's buttons come here.
+        try { if (navigator.mediaSession.playbackState !== 'playing') navigator.mediaSession.playbackState = 'playing'; } catch (_) {}
+        return;
+      }
       dbg('wheel: starting the near-silent sound');
       keepWheelAlive();
     }, 3000);
