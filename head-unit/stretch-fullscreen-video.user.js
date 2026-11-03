@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.27
+// @version      5.28
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -239,7 +239,13 @@
   function useCarTap() {
     const mode = carTap && carTap.mode;
     cancelCarTap();
-    if (mode === 'wake') { dbg('wheel turned on'); keepWheelAlive(); return; }
+    if (mode === 'wake') {
+      // Start the near-silent sound fresh inside this tap: sound started by a tap is the surest way
+      // for Firefox to hand it to Android (and the car) as a real player.
+      dbg('wheel turned on');
+      if (typeof startKeepAlive === 'function' && !audibleVideoPlaying()) startKeepAlive(); else keepWheelAlive();
+      return;
+    }
     if (typeof stopKeepAlive === 'function') stopKeepAlive();
     startPlayback();
     if (fullscreenElement()) return;
@@ -701,7 +707,7 @@
   const SEEK_PICKER = true;
   function onWatchPage() { return location.pathname === '/watch' || location.pathname.startsWith('/shorts/'); }
   function onYouTube() { return /(^|\.)youtube\.com$/.test(location.hostname); }
-  let videoStarted = false, pendingWatch = null;
+  let videoStarted = false, pendingWatch = null, carHeard = false;
 
   // Going to YouTube Home without a full page load when possible, so the wheel keeps working.
   function goHome() {
@@ -1135,6 +1141,7 @@
 
   // Seek ▲ opens the box and moves it forward.
   function onSeekNext() {
+    carHeard = true;
     dbg('car media command: nexttrack (seek ▲)');
     if (!onWatchPage() && onYouTube()) { moveHl(1); return; }
     if (picker && !picker.box.isConnected) closePicker();
@@ -1146,6 +1153,7 @@
   // On a video page it is otherwise play/pause (playing also goes fullscreen);
   // anywhere else on YouTube (Home, results...) it opens the box.
   function onSeekPrev() {
+    carHeard = true;
     dbg('car media command: previoustrack (seek ▼)');
     if (picker && !picker.box.isConnected) closePicker();
     if (picker) { choose(picker.sel); return; }
@@ -1203,7 +1211,33 @@
 
   // Any other YouTube page loaded from scratch (Home after starting the car, for example):
   // one MacroDroid tap turns the wheel on. The tap itself never reaches the page.
-  if (SEEK_PICKER && IS_TOP && !leavingForHome && onYouTube() && !onWatchPage()) requestCarTap('wake');
+  // If no wheel press has arrived yet, ask for that tap again a few times (MacroDroid can miss one).
+  let wakes = 0, wakeTimer = 0;
+  function askWake() {
+    clearTimeout(wakeTimer);
+    if (carHeard || onWatchPage() || document.visibilityState !== 'visible') return;
+    if (!carTap) requestCarTap('wake');
+    if (++wakes < 5) wakeTimer = setTimeout(askWake, 12000);
+  }
+  if (SEEK_PICKER && IS_TOP && !leavingForHome && onYouTube() && !onWatchPage()) askWake();
+
+  // Back in Firefox after another app (CarPlay...) had the car's buttons: start the near-silent sound
+  // again so Firefox becomes the car's player again, and on Home / lists ask for the wheel tap again.
+  if (SEEK_PICKER && IS_TOP && onYouTube()) {
+    let hiddenAt = 0;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') { hiddenAt = Date.now(); return; }
+      if (!hiddenAt || Date.now() - hiddenAt < 800) return;
+      hiddenAt = 0;
+      if (audibleVideoPlaying()) return;           // a playing video keeps the buttons by itself
+      const usingKeepAlive = keepAlive && !keepAlive.paused;
+      if (!usingKeepAlive && onWatchPage()) return; // paused video not paused by the wheel: leave it
+      dbg('back in Firefox: telling the car again');
+      carHeard = false;
+      startKeepAlive();
+      if (!onWatchPage()) { wakes = 0; askWake(); }
+    });
+  }
 
   // Keep the wheel alive while browsing YouTube: when a page that isn't a video shows up
   // (Back, Home, a channel...), start the near-silent sound if the page has been touched before.
@@ -1240,9 +1274,9 @@
       try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('previoustrack', onSeekPrev); } catch (_) {}
       // The car may send play / pause / stop instead (for example while the video is paused).
-      try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); if (onWatchPage()) playFullscreen('play'); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); if (onWatchPage()) playFullscreen('pause'); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); if (onWatchPage()) playFullscreen('pause'); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('play', () => { carHeard = true; dbg('car media command: play'); if (onWatchPage()) playFullscreen('play'); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('pause', () => { carHeard = true; dbg('car media command: pause'); if (onWatchPage()) playFullscreen('pause'); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('stop', () => { carHeard = true; dbg('car media command: stop'); if (onWatchPage()) playFullscreen('pause'); }); } catch (_) {}
     };
     claim();
     // Same as 5.14 (the last version where the wheel worked on the unit).
