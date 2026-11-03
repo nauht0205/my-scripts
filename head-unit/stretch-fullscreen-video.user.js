@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.23
+// @version      5.24
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -227,7 +227,7 @@
   function startPlayback() {
     const v = biggestVideo();
     if (v && !v.paused) return;
-    if (v && v.readyState > 0) { goLive(v); try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} return; }
+    if (v && v.readyState > 0) { if (liveResume) { liveResume = false; goLive(v); } try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} return; }
     // Only the thumbnail with its ▶ is showing: press the player's own play overlay.
     const box = playerElement();
     if (!box) return;
@@ -862,7 +862,9 @@
     try { const p = ytPlayer(); if (p && typeof p.seekToLiveHead === 'function') { p.seekToLiveHead(); return; } } catch (_) {}
     try {
       const r = v.seekable;
-      if (r && r.length) { const end = r.end(r.length - 1); if (end - v.currentTime > 2) v.currentTime = end - 1; }
+      // Only when there is a real stretch to skip (a half-loaded stream can report a tiny range,
+      // and jumping to its end meant jumping back to the start).
+      if (r && r.length) { const start = r.start(0), end = r.end(r.length - 1); if (end - start > 30 && end - v.currentTime > 10) v.currentTime = end - 3; }
     } catch (_) {}
   }
 
@@ -887,7 +889,7 @@
     try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
     if (tries > 0) setTimeout(() => { if (v.isConnected && v.paused && !wheelPauseAt) { dbg('play did not take, trying again'); playVideo(v, tries - 1); } }, 700);
   }
-  let wheelPauseAt = 0;
+  let wheelPauseAt = 0, liveResume = false;
   function pauseFromCar(v) {
     wheelPauseAt = Date.now();
     v.pause();
@@ -906,6 +908,7 @@
     const v = biggestVideo();
     if (v && !v.paused) { showPress('❚❚'); pauseFromCar(v); return; }
     wheelPauseAt = 0;
+    liveResume = true;   // a wheel play: a live stream resumes at live
     showPress('▶');
     if (fullscreenElement()) { stopKeepAlive(); if (v) { goLive(v); playVideo(v); } return; }
     requestCarTap();
