@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.5
+// @version      5.6
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen; the steering-wheel seek-up button moves a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen; the steering-wheel seek buttons move a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -326,7 +326,7 @@
   }
 
   // Temporary on-screen log (bottom-left) to see what happens when switching apps. Set to false to hide.
-  const DEBUG = true;   // TEMPORARY: car-button test (v5.5)
+  const DEBUG = false;
   let dbgBox = null, dbgTimer = 0;
   function dbg(msg, always) {
     if ((!DEBUG && !always) || !IS_TOP || !document.body) return;
@@ -517,7 +517,7 @@
     if (first) setTimeout(autoFsStep, 100);
   }, true);
 
-  // ---- Steering-wheel seek ▲ (media "next"): pick a suggested YouTube video without touching ----
+  // ---- Steering-wheel seek ▲ / ▼ (media "next" / "previous"): pick a suggested YouTube video without touching ----
   // The car sends seek ▲ to whichever app is playing, as a media "next track" command.
   // Each press shows a strip of suggested videos and moves the highlight box one step;
   // after a few seconds with no press, the boxed video plays. The box starts on the first tile,
@@ -586,7 +586,7 @@
     box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:linear-gradient(transparent,rgba(0,0,0,.85) 25%);' +
       'padding:40px 0 6px;font:600 17px/1.25 sans-serif;color:#fff;';
     const hint = document.createElement('div');
-    hint.textContent = 'Seek ▲ = next  ·  wait 3 s = choose';
+    hint.textContent = 'Seek ▲ / ▼ = move  ·  wait 3 s = choose';
     hint.style.cssText = 'padding:0 28px 10px;font-size:15px;opacity:.8;';
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:22px;overflow-x:auto;padding:14px 28px;scrollbar-width:none;';
@@ -617,13 +617,17 @@
     drawPicker();
   }
 
-  function onSeekNext() {
-    dbg('car media command: nexttrack (seek ▲)');
+  // Seek ▲ moves the box forward, seek ▼ backward; the first press of either just opens the strip.
+  function onSeek(step) {
+    dbg('car media command: ' + (step > 0 ? 'nexttrack (seek ▲)' : 'previoustrack (seek ▼)'));
     if (picker && !picker.box.isConnected) closePicker();
     if (!picker) { openPicker(); return; }
-    picker.sel = (picker.sel + 1) % picker.tiles.length;
+    const n = picker.tiles.length;
+    picker.sel = (picker.sel + step + n) % n;
     drawPicker();
   }
+  const onSeekNext = () => onSeek(1);
+  const onSeekPrev = () => onSeek(-1);
 
   // TEMPORARY car-button test: log every media command, key and play/pause the page receives.
   if (DEBUG && IS_TOP) {
@@ -646,7 +650,10 @@
   }
 
   if (SEEK_PICKER && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && 'mediaSession' in navigator) {
-    const claim = () => { try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {} };
+    const claim = () => {
+      try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('previoustrack', onSeekPrev); } catch (_) {}
+    };
     claim();
     // YouTube sets its own media handlers when a video loads, so keep claiming the button.
     setInterval(claim, 2000);
