@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.29
+// @version      5.30
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -198,7 +198,8 @@
     carTap = null;
   }
 
-  function requestCarTap() {
+  // mode 'restore': the tap brings back fullscreen after an app switch (nothing else changes).
+  function requestCarTap(mode) {
     if (window !== window.top) return;
     cancelCarTap();
     const el = document.createElement('div');
@@ -206,7 +207,7 @@
     el.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:2147483647;' +
       'background:rgba(0,0,0,.85);color:#fff;font:700 26px/1.2 sans-serif;padding:18px 30px;border-radius:30px;' +
       'border:2px solid rgba(255,255,255,.6);pointer-events:none;';
-    carTap = { el, pressed: false, timer: setTimeout(cancelCarTap, 6000) };
+    carTap = { el, mode, pressed: false, timer: setTimeout(cancelCarTap, 6000) };
     const show = () => { if (carTap && carTap.el === el) (fullscreenElement() || document.body).appendChild(el); };
     if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
   }
@@ -236,7 +237,9 @@
   }
 
   function useCarTap() {
+    const mode = carTap && carTap.mode;
     cancelCarTap();
+    if (mode === 'restore') { if (restore) doRestore(); return; }
     if (typeof stopKeepAlive === 'function') stopKeepAlive();
     startPlayback();
     if (fullscreenElement()) return;
@@ -525,7 +528,40 @@
   }
 
   function hideHint() { if (hint) { hint.remove(); hint = null; } }
-  function clearRestore() { restore = null; hideHint(); }
+  function clearRestore() { restore = null; hideHint(); uncover(); }
+
+  // ---- Coming back from another app: never show the page out of fullscreen ----
+  // Android drops fullscreen when you switch apps, and the browser only allows it back after a tap.
+  // Until that tap (MacroDroid's, or yours), the video already fills the whole page, stretched,
+  // so there is no "normal page" moment in between.
+  let coverEl = null, coverStyle = null, coverTimer = 0;
+  function cover() {
+    if (!IS_TOP || !restore || !restore.sure || fullscreenElement() || windowIsSmall() || !document.body) return;
+    const v = restore.v && restore.v.isConnected ? restore.v : biggestVideo();
+    const el = (restore.el && restore.el.isConnected && restore.el !== document.documentElement && restore.el !== document.body)
+      ? restore.el : (v ? playerBox(v) : null);
+    if (!el) return;
+    if (!coverStyle) {
+      coverStyle = document.createElement('style');
+      coverStyle.textContent =
+        '[data-sv-cover]{position:fixed!important;left:0!important;top:0!important;right:0!important;bottom:0!important;' +
+        'width:100vw!important;height:100vh!important;max-width:none!important;max-height:none!important;margin:0!important;' +
+        'transform:none!important;z-index:2147483640!important;background:#000!important}' +
+        '[data-sv-cover] video{position:absolute!important;left:0!important;top:0!important;width:100%!important;height:100%!important;' +
+        'max-width:none!important;max-height:none!important;transform:none!important;object-fit:fill!important}';
+    }
+    if (!coverStyle.isConnected) (document.head || document.documentElement).appendChild(coverStyle);
+    if (coverEl !== el) { uncover(); coverEl = el; el.setAttribute('data-sv-cover', ''); dbg('cover on'); }
+    // If no tap has brought fullscreen back after a moment, ask MacroDroid for one.
+    clearTimeout(coverTimer);
+    coverTimer = setTimeout(() => {
+      if (restore && coverEl && !fullscreenElement() && !document.hidden && !carTap) { dbg('cover: asking for the tap'); requestCarTap('restore'); }
+    }, 2500);
+  }
+  function uncover() {
+    clearTimeout(coverTimer);
+    if (coverEl) { coverEl.removeAttribute('data-sv-cover'); coverEl = null; dbg('cover off'); }
+  }
 
   function showHint() {
     if (hint || !IS_TOP || !document.body || !restore || windowIsSmall() || fullscreenElement()) return;
@@ -541,6 +577,7 @@
     restore = { v, el, sure, until: Date.now() + 12 * 60 * 60 * 1000 };
     dbg('restore armed, any tap=' + sure);
     showHint();
+    if (!document.hidden) cover();
   }
 
   // Touches inside iframes (embedded players) count as touches on the page.
@@ -558,18 +595,20 @@
     if (small) {
       lastAway = Date.now();
       hideHint();
+      uncover();
       if (restore) restore.sure = true;
       // Fullscreen ended just before the window shrank into the mini player.
       if (IS_TOP && lastExit && Date.now() - lastExit.time < 4000) { armRestore(lastExit.v, lastExit.el, true); lastExit = null; }
     } else {
       showHint();   // back to full size from the mini player
+      cover();
     }
   });
 
   document.addEventListener('visibilitychange', () => {
     dbg('page ' + (document.hidden ? 'hidden' : 'visible'));
     if (document.hidden) { lastAway = Date.now(); if (restore) restore.sure = true; hideHint(); }
-    else showHint();
+    else { showHint(); cover(); }
   });
   // Coming back from another app: if the page still thinks it is fullscreen but the window
   // no longer covers the screen, drop the stale state so the next tap restores for real.
@@ -583,7 +622,7 @@
   });
   addEventListener('pageshow', () => showHint());
   addEventListener('blur', () => { if (!IS_TOP) return; lastAway = Date.now(); if (restore) restore.sure = true; dbg('window blur'); });
-  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); showHint(); });
+  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); showHint(); cover(); });
 
   document.addEventListener('fullscreenchange', () => {
     const fs = fullscreenElement();
