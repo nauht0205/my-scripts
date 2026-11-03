@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.20
+// @version      5.21
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -706,6 +706,7 @@
   // Going to YouTube Home without a full page load when possible, so the wheel keeps working.
   function goHome() {
     if (picker) closePicker();
+    if (typeof hideHl === 'function') hideHl();
     if (!onYouTube()) { location.assign('https://m.youtube.com/'); return; }
     keepWheelAlive();
     if (location.pathname === '/') { scrollTo(0, 0); return; }
@@ -719,10 +720,15 @@
 
   // Away from a playing video the car only sends its buttons while Firefox makes a sound,
   // so the near-silent keep-alive plays while browsing YouTube.
+  // Never alongside a video that is playing with sound (it keeps the buttons coming by itself,
+  // and two sounds at once confuse which one gets the buttons).
+  function audibleVideoPlaying() {
+    for (const v of findVideos(document, [])) if (!v.paused && !v.muted && v.volume > 0 && !v.ended) return true;
+    return false;
+  }
   function keepWheelAlive() {
     if (!IS_TOP || !onYouTube()) return;
-    const v = biggestVideo();
-    if (v && !v.paused && !v.muted && onWatchPage()) return;
+    if (audibleVideoPlaying()) { if (keepAlive) { dbg('video has sound: near-silent sound stopped'); stopKeepAlive(); } return; }
     if (keepAlive && !keepAlive.paused) return;
     startKeepAlive();
   }
@@ -782,7 +788,9 @@
   let keepAlive = null, keepAliveUrl = null, keepAliveTimer = 0;
   function silentWavUrl() {
     if (keepAliveUrl) return keepAliveUrl;
-    const rate = 8000, n = rate * 2;             // 2 seconds, 8 kHz, 16-bit mono
+    // 10 seconds: Firefox ignores very short sounds for media buttons, and on YouTube Home this
+    // sound is all there is.
+    const rate = 8000, n = rate * 10;            // 10 seconds, 8 kHz, 16-bit mono
     const buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf);
     const str = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
     str(0, 'RIFF'); d.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
@@ -984,9 +992,80 @@
     drawPicker();
   }
 
+  // ---- YouTube Home / results / channel pages: a highlight box on the page's own videos ----
+  // ▲ moves the box to the next video (the page scrolls along, and YouTube loads more at the
+  // bottom), ▼ opens the boxed video. Nothing is chosen by waiting; the box hides after 30 s.
+  let hl = null;
+  function pageVideos() {
+    const seen = new Set(), out = [];
+    for (const a of document.querySelectorAll('a[href*="/watch"]')) {
+      const id = videoIdOf(a.href);
+      if (!id || seen.has(id) || !isShown(a)) continue;
+      const r = a.getBoundingClientRect();
+      if (r.width < 120 || r.height < 60) continue;             // the thumbnail link, not the title text
+      if (a.closest('[hidden], [aria-hidden="true"]')) continue;
+      seen.add(id);
+      const card = a.closest('ytm-rich-item-renderer, ytm-video-with-context-renderer, ytm-compact-video-renderer, ytm-media-item, ytd-rich-item-renderer') || a;
+      out.push({ id, link: a, card });
+    }
+    return out;
+  }
+  function drawHl() {
+    if (!hl) return;
+    const c = hl.item.card;
+    if (!c.isConnected || !onYouTube() || onWatchPage()) { hideHl(); return; }
+    const r = c.getBoundingClientRect();
+    Object.assign(hl.frame.style, { left: (r.left - 6) + 'px', top: (r.top - 6) + 'px', width: (r.width + 12) + 'px', height: (r.height + 12) + 'px' });
+    hl.raf = requestAnimationFrame(drawHl);
+  }
+  function hideHl() {
+    if (!hl) return;
+    cancelAnimationFrame(hl.raf);
+    clearTimeout(hl.timer);
+    hl.frame.remove();
+    hl = null;
+  }
+  function moveHl(step) {
+    const items = pageVideos();
+    if (!items.length) { dbg('no videos on this page', true); return; }
+    let i = 0;
+    if (hl) {
+      const cur = items.findIndex((it) => it.id === hl.item.id);
+      i = cur < 0 ? 0 : Math.min(items.length - 1, cur + step);
+    } else {
+      // Start on the first video that is on screen.
+      const first = items.findIndex((it) => { const r = it.card.getBoundingClientRect(); return r.bottom > 60 && r.top < innerHeight; });
+      i = first < 0 ? 0 : first;
+    }
+    if (!hl) {
+      const frame = document.createElement('div');
+      frame.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;border:6px solid #fff;border-radius:16px;' +
+        'box-shadow:0 0 0 3px rgba(0,0,0,.6),0 0 24px rgba(255,255,255,.6);transition:left .15s,top .15s,width .15s,height .15s;';
+      document.body.appendChild(frame);
+      hl = { frame, item: null, raf: 0, timer: 0 };
+    }
+    hl.item = items[i];
+    hl.item.card.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    cancelAnimationFrame(hl.raf);
+    drawHl();
+    clearTimeout(hl.timer);
+    hl.timer = setTimeout(hideHl, 30000);
+  }
+  function openHl() {
+    const it = hl && hl.item;
+    hideHl();
+    if (!it || !it.link.isConnected) return;
+    dbg('opening ' + it.id);
+    keepWheelAlive();
+    pendingWatch = { id: it.id, until: Date.now() + 10000 };
+    setTimeout(watchWhenReady, 300);
+    it.link.click();
+  }
+
   // Seek ▲ opens the box and moves it forward.
   function onSeekNext() {
     dbg('car media command: nexttrack (seek ▲)');
+    if (!onWatchPage() && onYouTube()) { moveHl(1); return; }
     if (picker && !picker.box.isConnected) closePicker();
     if (!picker) { openPicker(); return; }
     picker.sel = (picker.sel + 1) % picker.tiles.length;
@@ -999,7 +1078,7 @@
     dbg('car media command: previoustrack (seek ▼)');
     if (picker && !picker.box.isConnected) closePicker();
     if (picker) { choose(picker.sel); return; }
-    if (!onWatchPage()) { openPicker(); return; }
+    if (!onWatchPage() && onYouTube()) { if (hl) openHl(); else moveHl(0); return; }
     playFullscreen();
   }
 
@@ -1103,7 +1182,7 @@
     // sending ▲ / ▼ there.
     setInterval(() => {
       if (onWatchPage() || document.visibilityState !== 'visible') return;
-      if (keepAlive && !keepAlive.paused) return;
+      if (keepAlive && !keepAlive.paused && !audibleVideoPlaying()) return;
       dbg('wheel: starting the near-silent sound');
       keepWheelAlive();
     }, 3000);
