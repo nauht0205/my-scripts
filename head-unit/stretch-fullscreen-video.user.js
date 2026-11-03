@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.30
+// @version      5.31
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -491,7 +491,7 @@
   const DEBUG = false;
   let dbgBox = null, dbgTimer = 0;
   function dbg(msg, always) {
-    if ((!DEBUG && !always) || !IS_TOP || !document.body) return;
+    if (!DEBUG || !IS_TOP || !document.body) return;
     if (!dbgBox) {
       dbgBox = document.createElement('div');
       dbgBox.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483647;background:rgba(0,0,0,.8);color:#7f7;' +
@@ -534,7 +534,7 @@
   // Android drops fullscreen when you switch apps, and the browser only allows it back after a tap.
   // Until that tap (MacroDroid's, or yours), the video already fills the whole page, stretched,
   // so there is no "normal page" moment in between.
-  let coverEl = null, coverStyle = null, coverTimer = 0;
+  let coverEl = null, coverStyle = null, coverTimer = 0, coverAsks = 0;
   function cover() {
     if (!IS_TOP || !restore || !restore.sure || fullscreenElement() || windowIsSmall() || !document.body) return;
     const v = restore.v && restore.v.isConnected ? restore.v : biggestVideo();
@@ -552,11 +552,17 @@
     }
     if (!coverStyle.isConnected) (document.head || document.documentElement).appendChild(coverStyle);
     if (coverEl !== el) { uncover(); coverEl = el; el.setAttribute('data-sv-cover', ''); dbg('cover on'); }
-    // If no tap has brought fullscreen back after a moment, ask MacroDroid for one.
+    hideHint();
+    // Ask MacroDroid for the tap that brings fullscreen back. Same for every way back to Firefox
+    // (AUDIO, Hamilton home, recent apps...). A short wait first: Firefox refuses fullscreen
+    // while it is still coming to the front. Up to 4 tries if a tap gets refused or missed.
     clearTimeout(coverTimer);
-    coverTimer = setTimeout(() => {
-      if (restore && coverEl && !fullscreenElement() && !document.hidden && !carTap) { dbg('cover: asking for the tap'); requestCarTap('restore'); }
-    }, 2500);
+    coverTimer = setTimeout(function ask() {
+      if (!restore || !coverEl || fullscreenElement() || document.hidden || windowIsSmall()) return;
+      if (coverAsks >= 4) return;
+      if (!carTap) { coverAsks++; dbg('cover: asking for the tap'); requestCarTap('restore'); }
+      coverTimer = setTimeout(ask, 2500);
+    }, 500);
   }
   function uncover() {
     clearTimeout(coverTimer);
@@ -564,7 +570,8 @@
   }
 
   function showHint() {
-    if (hint || !IS_TOP || !document.body || !restore || windowIsSmall() || fullscreenElement()) return;
+    // Only when a tap elsewhere would not restore; otherwise any tap (or MacroDroid's) does it.
+    if (hint || !IS_TOP || !document.body || !restore || restore.sure || windowIsSmall() || fullscreenElement()) return;
     hint = document.createElement('div');
     hint.textContent = '⛶  Tap to return to fullscreen';
     hint.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483647;' +
@@ -627,7 +634,11 @@
   document.addEventListener('fullscreenchange', () => {
     const fs = fullscreenElement();
     if (IS_TOP) dbg(fs ? 'fullscreen ON' : 'fullscreen OFF (last touch ' + Math.round((Date.now() - lastTouch) / 100) / 10 + 's ago)');
-    if (fs) { lastFsEl = fs; fsEnterAt = Date.now(); clearRestore(); return; }
+    if (fs) {
+      lastFsEl = fs; fsEnterAt = Date.now(); coverAsks = 0; clearRestore();
+      if (carTap && carTap.mode === 'restore') cancelCarTap();   // fullscreen is back: no tap needed
+      return;
+    }
     if (!IS_TOP) return;   // the top page owns the pill
     const v = lastStretched && lastStretched.isConnected ? lastStretched : null;
     const el = lastFsEl;
@@ -647,7 +658,13 @@
     clearRestore();
     if (!r) return;
     dbg('restoring...');
-    setTimeout(() => { if (fullscreenElement()) dbg('restore OK'); else dbg('fullscreen restore failed (browser refused)', true); }, 1200);
+    // Firefox can refuse when the tap comes while it is still coming back to the front:
+    // then keep the video filling the page and ask for another tap.
+    setTimeout(() => {
+      if (fullscreenElement()) { dbg('restore OK'); return; }
+      dbg('fullscreen restore failed (browser refused)');
+      if (!restore && !document.hidden && !windowIsSmall()) armRestore(r.v, r.el, true);
+    }, 1200);
     if (r.v && r.v.isConnected) { goFullscreen(r.v); return; }
     if (r.el && r.el.isConnected && r.el.requestFullscreen) {
       try { const p = r.el.requestFullscreen(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
@@ -707,7 +724,11 @@
       goFullscreen(v);
       setTimeout(() => {
         if (fullscreenElement()) dbg('auto fullscreen OK');
-        else dbg('auto fullscreen failed (browser refused)', true);
+        else if (onWatchPage() && !document.hidden) {
+          // The click's permission ran out before the video was ready: MacroDroid's tap finishes it.
+          dbg('auto fullscreen refused: asking for the tap');
+          requestCarTap();
+        }
       }, 1200);
       return;
     }
