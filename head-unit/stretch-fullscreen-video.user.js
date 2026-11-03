@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.7
+// @version      5.8
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); the steering-wheel seek buttons move a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -624,13 +624,14 @@
     return [...byId.values()];
   }
 
-  // Second tile: outside fullscreen, ask MacroDroid for the tap that starts fullscreen;
-  // in fullscreen, pause or play the video (that needs no tap).
-  function fullscreenTile() {
-    if (!fullscreenElement()) { requestCarTap(); return; }
+  // Seek ▼ = play/pause. Pausing just pauses (fullscreen or not). Playing also goes fullscreen:
+  // in fullscreen it simply resumes; outside fullscreen it asks MacroDroid for the tap that
+  // starts the video in fullscreen.
+  function playFullscreen() {
     const v = biggestVideo();
-    if (!v) return;
-    if (v.paused) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} } else v.pause();
+    if (v && !v.paused) { v.pause(); return; }
+    if (fullscreenElement()) { if (v) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} } return; }
+    requestCarTap();
   }
 
   function closePicker() {
@@ -660,11 +661,7 @@
     const left = t.offsetLeft - (p.row.clientWidth - t.offsetWidth) / 2;
     p.row.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
     clearTimeout(p.timer);
-    p.timer = setTimeout(() => {
-      if (p.sel === 0) closePicker();
-      else if (p.sel === 1) { closePicker(); fullscreenTile(); }
-      else choose(p.sel - 2);
-    }, PICK_DELAY);
+    p.timer = setTimeout(() => { if (p.sel === 0) closePicker(); else choose(p.sel - 1); }, PICK_DELAY);
   }
 
   function openPicker() {
@@ -674,7 +671,7 @@
     box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:linear-gradient(transparent,rgba(0,0,0,.85) 25%);' +
       'padding:40px 0 6px;font:600 17px/1.25 sans-serif;color:#fff;';
     const hint = document.createElement('div');
-    hint.textContent = 'Seek ▲ / ▼ = move  ·  wait 3 s = choose';
+    hint.textContent = 'Seek ▲ = move  ·  Seek ▼ or wait 3 s = choose';
     hint.style.cssText = 'padding:0 28px 10px;font-size:15px;opacity:.8;';
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:22px;overflow-x:auto;padding:14px 28px;scrollbar-width:none;';
@@ -685,12 +682,6 @@
     close.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); });
     row.appendChild(close);
     tiles.push(close);
-    const fsTile = document.createElement('div');
-    fsTile.textContent = fullscreenElement() ? '⏯  Pause / play' : '⛶  Fullscreen + play';
-    fsTile.style.cssText = close.style.cssText + 'flex-basis:220px;background:#1f4f8f;';
-    fsTile.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); useCarTap(); });
-    row.appendChild(fsTile);
-    tiles.push(fsTile);
     items.forEach((it, i) => {
       const t = document.createElement('div');
       t.style.cssText = 'flex:0 0 280px;border-radius:12px;overflow:hidden;background:#222;transition:transform .15s;cursor:pointer;';
@@ -711,17 +702,22 @@
     drawPicker();
   }
 
-  // Seek ▲ moves the box forward, seek ▼ backward; the first press of either just opens the strip.
-  function onSeek(step) {
-    dbg('car media command: ' + (step > 0 ? 'nexttrack (seek ▲)' : 'previoustrack (seek ▼)'));
+  // Seek ▲ opens the strip and moves the box forward.
+  function onSeekNext() {
+    dbg('car media command: nexttrack (seek ▲)');
     if (picker && !picker.box.isConnected) closePicker();
     if (!picker) { openPicker(); return; }
-    const n = picker.tiles.length;
-    picker.sel = (picker.sel + step + n) % n;
+    picker.sel = (picker.sel + 1) % picker.tiles.length;
     drawPicker();
   }
-  const onSeekNext = () => onSeek(1);
-  const onSeekPrev = () => onSeek(-1);
+  // Seek ▼ is the OK button: with the strip open it chooses the boxed tile right away;
+  // otherwise it plays the video in fullscreen (or pauses/plays when already fullscreen).
+  function onSeekPrev() {
+    dbg('car media command: previoustrack (seek ▼)');
+    if (picker && !picker.box.isConnected) closePicker();
+    if (picker) { const sel = picker.sel; if (sel === 0) closePicker(); else choose(sel - 1); return; }
+    playFullscreen();
+  }
 
   // TEMPORARY car-button test: log every media command, key and play/pause the page receives.
   if (DEBUG && IS_TOP) {
