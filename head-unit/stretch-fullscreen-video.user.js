@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.4
+// @version      5.5
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen; the steering-wheel seek-up button moves a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
@@ -326,7 +326,7 @@
   }
 
   // Temporary on-screen log (bottom-left) to see what happens when switching apps. Set to false to hide.
-  const DEBUG = true;   // TEMPORARY: car-button test (v5.4)
+  const DEBUG = true;   // TEMPORARY: car-button test (v5.5)
   let dbgBox = null, dbgTimer = 0;
   function dbg(msg, always) {
     if ((!DEBUG && !always) || !IS_TOP || !document.body) return;
@@ -337,9 +337,9 @@
     }
     if (!dbgBox.isConnected) document.body.appendChild(dbgBox);
     const t = new Date(), ts = t.toTimeString().slice(3, 8) + '.' + String(t.getMilliseconds()).padStart(3, '0').slice(0, 1);
-    dbgBox.textContent = (dbgBox.textContent + '\n' + ts + ' ' + msg).split('\n').filter(Boolean).slice(-9).join('\n');
+    dbgBox.textContent = (dbgBox.textContent + '\n' + ts + ' ' + msg).split('\n').filter(Boolean).slice(-14).join('\n');
     clearTimeout(dbgTimer);
-    dbgTimer = setTimeout(() => { if (dbgBox) { dbgBox.remove(); dbgBox.textContent = ''; } }, 30000);
+    dbgTimer = setTimeout(() => { if (dbgBox) { dbgBox.remove(); dbgBox.textContent = ''; } }, 120000);
   }
 
   // Animation frames stop while Firefox is in the background, so a long gap between frames
@@ -632,9 +632,16 @@
     document.addEventListener('play', (e) => { if (e.target.tagName === 'VIDEO') dbg('video playing'); }, true);
     document.addEventListener('volumechange', (e) => { if (e.target.tagName === 'VIDEO') dbg('volume/mute changed'); }, true);
     if ('mediaSession' in navigator) {
-      for (const action of ['previoustrack', 'seekbackward', 'seekforward', 'stop', 'skipad']) {
-        try { navigator.mediaSession.setActionHandler(action, () => dbg('car media command: ' + action)); } catch (_) {}
-      }
+      // YouTube installs its own handlers when a video loads, so keep claiming these.
+      const claimTest = () => {
+        for (const action of ['previoustrack', 'seekbackward', 'seekforward', 'stop', 'skipad']) {
+          try { navigator.mediaSession.setActionHandler(action, () => dbg('car media command: ' + action)); } catch (_) {}
+        }
+      };
+      claimTest();
+      setInterval(claimTest, 2000);
+      document.addEventListener('play', claimTest, true);
+      setTimeout(() => dbg('car-button test ready: press the buttons now'), 3000);
     }
   }
 
