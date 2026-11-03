@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.26
+// @version      5.27
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -826,8 +826,23 @@
       if (!keepAliveEl) { keepAliveEl = new Audio(silentWavUrl()); keepAliveEl.loop = true; }
       keepAlive = keepAliveEl;
       keepAlive.currentTime = 0;
-      const p = keepAlive.play();
-      if (p && p.then) p.then(() => { dbg('silent keep-alive playing'); nameSession(); }, (e) => dbg('keep-alive blocked: ' + (e && e.name), true));
+      // Name the session before the sound starts, so Android announces it to the car with its name.
+      nameSession();
+      const ka = keepAlive;
+      const p = ka.play();
+      if (p && p.then) p.then(() => {
+        dbg('silent keep-alive playing');
+        nameSession();
+        // The first load (for example right after a script update) the car sometimes doesn't pick it
+        // up. Stop and start once more a moment later, so the car sees it start again, named.
+        setTimeout(() => {
+          if (keepAlive !== ka || ka.paused || onWatchPage() || audibleVideoPlaying()) return;
+          ka.pause();
+          nameSession();
+          const p2 = ka.play();
+          if (p2 && p2.then) p2.then(() => dbg('keep-alive re-announced to the car'), () => {});
+        }, 1500);
+      }, (e) => dbg('keep-alive blocked: ' + (e && e.name), true));
     } catch (e) { dbg('keep-alive failed: ' + (e && e.name), true); }
     keepAliveTimer = setTimeout(stopKeepAlive, 30 * 60 * 1000);
   }
@@ -1040,6 +1055,18 @@
     }
     return out;
   }
+  // The thumbnail picture of a card (the frame goes around just that, not the title below).
+  function thumbOf(card) {
+    let best = null, area = 0;
+    for (const el of card.querySelectorAll('img, ytm-thumbnail-cover, [class*="thumbnail"], a[href*="/watch"] > div')) {
+      const r = el.getBoundingClientRect();
+      if (r.width < 100 || r.height < 56) continue;
+      if (r.width * r.height > area) { best = el; area = r.width * r.height; }
+    }
+    // Never bigger than the card itself.
+    const cr = card.getBoundingClientRect();
+    return best && area < cr.width * cr.height ? best : card;
+  }
   function drawHl() {
     if (!hl) return;
     if (!onYouTube() || onWatchPage()) { hideHl(); return; }
@@ -1049,9 +1076,9 @@
       if (!again) { hideHl(); return; }
       hl.item = again;
     }
-    const c = hl.item.card;
+    const c = thumbOf(hl.item.card);
     const r = c.getBoundingClientRect();
-    Object.assign(hl.frame.style, { left: (r.left - 6) + 'px', top: (r.top - 6) + 'px', width: (r.width + 12) + 'px', height: (r.height + 12) + 'px' });
+    Object.assign(hl.frame.style, { left: (r.left - 4) + 'px', top: (r.top - 4) + 'px', width: (r.width + 8) + 'px', height: (r.height + 8) + 'px' });
     hl.raf = requestAnimationFrame(drawHl);
   }
   function hideHl() {
