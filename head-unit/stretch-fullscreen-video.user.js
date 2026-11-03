@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.25
+// @version      5.26
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box (Close, YouTube Home, then the videos: suggestions, or the Home feed), seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -899,18 +899,26 @@
     }, 700);
   }
 
-  // One wheel press can arrive twice (as two commands); only the first one counts.
+  // One wheel press can arrive twice, even as two different commands (for example "pause" and
+  // "previous track"); doing both would pause and play again at once, so the press seems lost.
+  // Every play/pause command from the car goes through here and only the first one counts.
   let lastToggle = 0;
-  function playFullscreen() {
+  function playFullscreen(want) {
     const now = Date.now();
-    if (now - lastToggle < 200) { dbg('▼ repeat ignored'); return; }
-    lastToggle = now;
+    if (now - lastToggle < 450) { dbg('▼ repeat ignored'); return; }
     const v = biggestVideo();
-    if (v && !v.paused) { showPress('❚❚'); pauseFromCar(v); return; }
+    const playing = v && !v.paused;
+    if (want === 'play' && playing) return;
+    if (want === 'pause' && !playing) return;
+    lastToggle = now;
+    if (playing) { showPress('❚❚'); pauseFromCar(v); return; }
     wheelPauseAt = 0;
     liveResume = true;   // a wheel play: a live stream resumes at live
     showPress('▶');
     if (fullscreenElement()) { stopKeepAlive(); if (v) { goLive(v); playVideo(v); } return; }
+    // Not in fullscreen: start playing right away (so ▼ works even if the MacroDroid tap is late
+    // or missing), and ask for the tap that puts it in fullscreen.
+    if (v && v.readyState > 0) { liveResume = false; goLive(v); playVideo(v); }
     requestCarTap();
   }
 
@@ -1205,14 +1213,17 @@
       try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('previoustrack', onSeekPrev); } catch (_) {}
       // The car may send play / pause / stop instead (for example while the video is paused).
-      try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); if (!onWatchPage()) return; const v = biggestVideo(); if (!v || v.paused) playFullscreen(); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); if (!onWatchPage()) return; const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
-      try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); if (!onWatchPage()) return; const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); if (onWatchPage()) playFullscreen('play'); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); if (onWatchPage()) playFullscreen('pause'); }); } catch (_) {}
+      try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); if (onWatchPage()) playFullscreen('pause'); }); } catch (_) {}
     };
     claim();
     // Same as 5.14 (the last version where the wheel worked on the unit).
     setInterval(claim, 2000);
-    document.addEventListener('play', claim, true);
+    // YouTube puts its own handlers back right after a video plays, pauses or loads, which could
+    // swallow the next press; take them back straight after each of those, and again a moment later.
+    const reclaim = () => { claim(); setTimeout(claim, 0); setTimeout(claim, 250); setTimeout(claim, 1000); };
+    for (const ev of ['play', 'pause', 'playing', 'loadeddata', 'emptied']) document.addEventListener(ev, reclaim, true);
     dbg('wheel buttons claimed');
     // Off a video page (Home, results...) keep the near-silent sound going, so the car keeps
     // sending ▲ / ▼ there.
