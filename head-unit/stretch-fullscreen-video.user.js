@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.14
+// @version      5.15
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause, and playing also goes fullscreen. Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); steering-wheel seek ▲ moves a highlight box through the suggested videos, seek ▼ plays the chosen one; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -225,7 +225,7 @@
   function startPlayback() {
     const v = biggestVideo();
     if (v && !v.paused) return;
-    if (v && v.readyState > 0) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} return; }
+    if (v && v.readyState > 0) { goLive(v); try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} return; }
     // Only the thumbnail with its ▶ is showing: press the player's own play overlay.
     const box = playerElement();
     if (!box) return;
@@ -666,6 +666,7 @@
   // "✕ Close", so opening the strip by accident never plays anything.
   // Set SEEK_PICKER to false to turn this off.
   const SEEK_PICKER = true;
+  let claiming = false;
   const PICK_DELAY = 3000, MAX_PICKS = 12;
   let picker = null;
 
@@ -732,15 +733,71 @@
   }
   document.addEventListener('play', (e) => { if (e.target !== keepAlive && e.target.tagName === 'VIDEO') stopKeepAlive(); }, true);
 
-  function pauseFromCar(v) {
-    v.pause();
-    startKeepAlive();
+  // ---- Live streams: resuming always jumps to live (never behind) ----
+  function ytPlayer() {
+    const el = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+    if (!el) return null;
+    return el.wrappedJSObject || el;
+  }
+  function isLive(v) {
+    if (!v) return false;
+    if (v.duration === Infinity) return true;
+    try { const p = ytPlayer(); const d = p && p.getVideoData && p.getVideoData(); if (d && typeof d.isLive === 'boolean') return d.isLive; } catch (_) {}
+    const box = playerBox(v);
+    return !!(box && box.querySelector('.ytp-live, .ytp-live-badge[disabled], .ytm-live-badge, [class*="live-badge"]'));
+  }
+  function goLive(v) {
+    if (!isLive(v)) return;
+    dbg('live stream: jumping to live');
+    try { const p = ytPlayer(); if (p && typeof p.seekToLiveHead === 'function') { p.seekToLiveHead(); return; } } catch (_) {}
+    try {
+      const r = v.seekable;
+      if (r && r.length) { const end = r.end(r.length - 1); if (end - v.currentTime > 2) v.currentTime = end - 1; }
+    } catch (_) {}
   }
 
+  // A quick ▶ / ❚❚ in the middle of the screen, so you can see the wheel press arrived.
+  let pressIcon = null;
+  function showPress(text) {
+    if (!IS_TOP || !document.body) return;
+    if (!pressIcon) {
+      pressIcon = document.createElement('div');
+      pressIcon.style.cssText = 'position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:2147483647;pointer-events:none;' +
+        'background:rgba(0,0,0,.6);color:#fff;font:700 54px/1 sans-serif;padding:22px 30px;border-radius:50px;transition:opacity .3s;';
+    }
+    pressIcon.textContent = text;
+    pressIcon.style.opacity = '1';
+    (fullscreenElement() || document.body).appendChild(pressIcon);
+    clearTimeout(pressIcon.timer);
+    pressIcon.timer = setTimeout(() => { pressIcon.style.opacity = '0'; }, 600);
+  }
+
+  // Play / pause, then check it really happened; YouTube sometimes undoes or ignores the first try.
+  function playVideo(v, tries = 2) {
+    try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
+    if (tries > 0) setTimeout(() => { if (v.isConnected && v.paused && !wheelPauseAt) { dbg('play did not take, trying again'); playVideo(v, tries - 1); } }, 700);
+  }
+  let wheelPauseAt = 0;
+  function pauseFromCar(v) {
+    wheelPauseAt = Date.now();
+    v.pause();
+    startKeepAlive();
+    setTimeout(() => {
+      if (v.isConnected && !v.paused && wheelPauseAt && Date.now() - wheelPauseAt < 1500) { dbg('pause did not take, trying again'); v.pause(); }
+    }, 700);
+  }
+
+  // One wheel press can arrive twice (as two commands); only the first one counts.
+  let lastToggle = 0;
   function playFullscreen() {
+    const now = Date.now();
+    if (now - lastToggle < 200) { dbg('▼ repeat ignored'); return; }
+    lastToggle = now;
     const v = biggestVideo();
-    if (v && !v.paused) { pauseFromCar(v); return; }
-    if (fullscreenElement()) { stopKeepAlive(); if (v) { try { const p = v.play(); if (p && p.catch) p.catch(() => {}); } catch (_) {} } return; }
+    if (v && !v.paused) { showPress('❚❚'); pauseFromCar(v); return; }
+    wheelPauseAt = 0;
+    showPress('▶');
+    if (fullscreenElement()) { stopKeepAlive(); if (v) { goLive(v); playVideo(v); } return; }
     requestCarTap();
   }
 
@@ -864,13 +921,37 @@
   }
 
   if (SEEK_PICKER && IS_TOP && /(^|\.)youtube\.com$/.test(location.hostname) && 'mediaSession' in navigator) {
+    // YouTube re-sets its own handlers whenever the video changes state (for example right after a
+    // pause), and a press landing in that moment used to go to YouTube and do nothing. So the page
+    // isn't allowed to set these five; only the script's own handlers stay.
+    (function lockHandlers() {
+      const owned = ['nexttrack', 'previoustrack', 'play', 'pause', 'stop'];
+      const pageWin = window.wrappedJSObject;
+      try {
+        if (!pageWin) {
+          const P = MediaSession.prototype, orig = P.setActionHandler;
+          P.setActionHandler = function (action, h) {
+            if (owned.includes(action) && !claiming) return;
+            return orig.call(this, action, h);
+          };
+        } else {
+          const P = pageWin.MediaSession.prototype, orig = P.setActionHandler;
+          exportFunction(function (action, h) {
+            if (owned.includes(String(action))) return;
+            return orig.call(this, action, h);
+          }, P, { defineAs: 'setActionHandler' });
+        }
+      } catch (_) {}
+    })();
     const claim = () => {
+      claiming = true;
       try { navigator.mediaSession.setActionHandler('nexttrack', onSeekNext); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('previoustrack', onSeekPrev); } catch (_) {}
       // The car may send play / pause / stop instead (for example while the video is paused).
       try { navigator.mediaSession.setActionHandler('play', () => { dbg('car media command: play'); const v = biggestVideo(); if (!v || v.paused) playFullscreen(); }); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('pause', () => { dbg('car media command: pause'); const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
       try { navigator.mediaSession.setActionHandler('stop', () => { dbg('car media command: stop'); const v = biggestVideo(); if (v && !v.paused) pauseFromCar(v); }); } catch (_) {}
+      claiming = false;
     };
     claim();
     // YouTube sets its own media handlers when a video loads, so keep claiming the button.
