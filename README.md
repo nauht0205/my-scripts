@@ -1,6 +1,6 @@
 # my-scripts
 
-Tampermonkey scripts. Each one updates itself from this repository.
+Userscripts (Tampermonkey / Violentmonkey). Each one updates itself from this repository.
 
 | Script | Install link |
 |---|---|
@@ -9,5 +9,6 @@ Tampermonkey scripts. Each one updates itself from this repository.
 | VTO Auto Accept (PC) | [pc/vto-auto-accept.user.js](https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-auto-accept.user.js) |
 | VTO Phone Alerts (PC) | [pc/vto-phone-alerts.user.js](https://raw.githubusercontent.com/nauht0205/my-scripts/main/pc/vto-phone-alerts.user.js) |
 | Transfer Schedule | [transfer-schedule.user.js](https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js) |
+| Stretch Fullscreen Video (car head unit, Violentmonkey in Firefox) | [head-unit/stretch-fullscreen-video.user.js](https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js) |
 
 No keys are stored here. Pushover keys live in Tampermonkey on each computer.
