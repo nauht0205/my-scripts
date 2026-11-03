@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.2
+// @version      5.3
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen; the steering-wheel seek-up button moves a highlight box through the suggested videos and plays the chosen one. Double-tap the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen.
@@ -520,7 +520,8 @@
   // ---- Steering-wheel seek ▲ (media "next"): pick a suggested YouTube video without touching ----
   // The car sends seek ▲ to whichever app is playing, as a media "next track" command.
   // Each press shows a strip of suggested videos and moves the highlight box one step;
-  // after a few seconds with no press, the boxed video plays. The last tile closes the strip.
+  // after a few seconds with no press, the boxed video plays. The box starts on the first tile,
+  // "✕ Close", so opening the strip by accident never plays anything.
   // Set SEEK_PICKER to false to turn this off.
   const SEEK_PICKER = true;
   const PICK_DELAY = 3000, MAX_PICKS = 12;
@@ -575,7 +576,7 @@
     const left = t.offsetLeft - (p.row.clientWidth - t.offsetWidth) / 2;
     p.row.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
     clearTimeout(p.timer);
-    p.timer = setTimeout(() => { if (p.sel >= p.items.length) closePicker(); else choose(p.sel); }, PICK_DELAY);
+    p.timer = setTimeout(() => { if (p.sel === 0) closePicker(); else choose(p.sel - 1); }, PICK_DELAY);
   }
 
   function openPicker() {
@@ -585,11 +586,17 @@
     box.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:2147483647;background:linear-gradient(transparent,rgba(0,0,0,.85) 25%);' +
       'padding:40px 0 6px;font:600 17px/1.25 sans-serif;color:#fff;';
     const hint = document.createElement('div');
-    hint.textContent = 'Seek ▲ = next  ·  wait 3 s = play';
+    hint.textContent = 'Seek ▲ = next  ·  wait 3 s = choose';
     hint.style.cssText = 'padding:0 28px 10px;font-size:15px;opacity:.8;';
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:22px;overflow-x:auto;padding:14px 28px;scrollbar-width:none;';
     const tiles = [];
+    const close = document.createElement('div');
+    close.textContent = '✕  Close';
+    close.style.cssText = 'flex:0 0 180px;border-radius:12px;background:#333;display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer;';
+    close.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); });
+    row.appendChild(close);
+    tiles.push(close);
     items.forEach((it, i) => {
       const t = document.createElement('div');
       t.style.cssText = 'flex:0 0 280px;border-radius:12px;overflow:hidden;background:#222;transition:transform .15s;cursor:pointer;';
@@ -604,12 +611,6 @@
       row.appendChild(t);
       tiles.push(t);
     });
-    const close = document.createElement('div');
-    close.textContent = '✕  Close';
-    close.style.cssText = 'flex:0 0 180px;border-radius:12px;background:#333;display:flex;align-items:center;justify-content:center;font-size:22px;cursor:pointer;';
-    close.addEventListener('click', (e) => { e.stopPropagation(); closePicker(); });
-    row.appendChild(close);
-    tiles.push(close);
     box.append(hint, row);
     (fullscreenElement() || document.body).appendChild(box);
     picker = { box, row, tiles, items, sel: 0, timer: 0 };
