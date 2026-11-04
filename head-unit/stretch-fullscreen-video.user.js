@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.34
+// @version      5.35
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -219,9 +219,10 @@
     cancelCarTap();
     const el = document.createElement('div');
     el.textContent = '⛶  ' + CAR_TAP_TEXT;
-    el.style.cssText = 'position:fixed;left:50%;top:40%;transform:translate(-50%,-50%);z-index:2147483647;' +
-      'background:rgba(0,0,0,.85);color:#fff;font:700 26px/1.2 sans-serif;padding:18px 30px;border-radius:30px;' +
-      'border:2px solid rgba(255,255,255,.6);pointer-events:none;';
+    // Small and dim: it is only there for MacroDroid to read (its tap lands on the middle of the screen).
+    el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;' +
+      'background:rgba(0,0,0,.45);color:rgba(255,255,255,.7);font:600 15px/1.2 sans-serif;padding:7px 14px;border-radius:16px;' +
+      'pointer-events:none;';
     carTap = { el, mode, pressed: false, timer: setTimeout(cancelCarTap, 6000) };
     const show = () => { if (carTap && carTap.el === el) (fullscreenElement() || document.body).appendChild(el); };
     if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
