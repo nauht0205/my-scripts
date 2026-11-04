@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.36
+// @version      5.37
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -645,8 +645,22 @@
   document.addEventListener('visibilitychange', () => {
     dbg('page ' + (document.hidden ? 'hidden' : 'visible'));
     if (document.hidden) { lastAway = Date.now(); makeSure(); hideHint(); }
-    else { showHint(); cover(); }
+    else { showHint(); cover(); nudgeRepaint(); }
   });
+  // Back from another app Firefox sometimes leaves the page undrawn (a plain purple screen).
+  // A tiny change to the page makes it draw again; repeated a few times while it comes back.
+  function nudgeRepaint() {
+    if (!IS_TOP) return;
+    for (const ms of [150, 600, 1500]) {
+      setTimeout(() => {
+        if (document.hidden) return;
+        const de = document.documentElement;
+        de.style.setProperty('outline', '1px solid transparent');
+        requestAnimationFrame(() => { de.style.removeProperty('outline'); });
+        try { const y = scrollY; scrollTo(scrollX, y + 1); scrollTo(scrollX, y); } catch (_) {}
+      }, ms);
+    }
+  }
   // Coming back from another app: if the page still thinks it is fullscreen but the window
   // no longer covers the screen, drop the stale state so the next tap restores for real.
   document.addEventListener('visibilitychange', () => {
@@ -659,7 +673,7 @@
   });
   addEventListener('pageshow', () => showHint());
   addEventListener('blur', () => { if (!IS_TOP) return; lastAway = Date.now(); makeSure(); dbg('window blur'); });
-  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); showHint(); cover(); });
+  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); showHint(); cover(); nudgeRepaint(); });
 
   document.addEventListener('fullscreenchange', () => {
     const fs = fullscreenElement();
