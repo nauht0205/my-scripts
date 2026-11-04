@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.31
+// @version      5.32
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
-// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (or the mini player), the next tap returns to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
+// @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
 // @match        *://*/*
 // @run-at       document-start
 // @grant        none
@@ -64,9 +64,24 @@
   }
 
   // Finds videos everywhere, including inside shadow DOM (some players hide the <video> there).
+  // Looking through every element for shadow DOM is slow on a big page, so the list of elements
+  // that have one is refreshed at most every 3 seconds, and skipped on YouTube (it has none).
+  const NO_SHADOW_VIDEOS = /(^|\.)youtube\.com$/.test(location.hostname);
+  let shadowHosts = [], shadowHostsAt = 0;
   function findVideos(root, out) {
     for (const v of root.querySelectorAll('video')) out.push(v);
-    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) findVideos(el.shadowRoot, out);
+    if (root !== document) {
+      for (const el of root.querySelectorAll('*')) if (el.shadowRoot) findVideos(el.shadowRoot, out);
+      return out;
+    }
+    if (NO_SHADOW_VIDEOS) return out;
+    const now = Date.now();
+    if (now - shadowHostsAt > 3000) {
+      shadowHostsAt = now;
+      shadowHosts = [];
+      for (const el of document.querySelectorAll('*')) if (el.shadowRoot) shadowHosts.push(el);
+    }
+    for (const el of shadowHosts) if (el.shadowRoot) findVideos(el.shadowRoot, out);
     return out;
   }
 
@@ -490,7 +505,7 @@
   // On-screen log (bottom-left) for troubleshooting. Set to true to show it.
   const DEBUG = false;
   let dbgBox = null, dbgTimer = 0;
-  function dbg(msg, always) {
+  function dbg(msg) {
     if (!DEBUG || !IS_TOP || !document.body) return;
     if (!dbgBox) {
       dbgBox = document.createElement('div');
@@ -522,8 +537,9 @@
 
   // Back after Firefox sat unused (the car was off, or a long time in CarPlay): YouTube Home.
   function idleHome() {
-    dbg('unused for ' + IDLE_HOME_MIN + '+ min: going to YouTube Home', true);
+    dbg('unused for ' + IDLE_HOME_MIN + '+ min: going to YouTube Home');
     clearRestore();
+    cancelCarTap();
     if (location.pathname !== '/') goHome();
   }
 
@@ -537,6 +553,7 @@
   let coverEl = null, coverStyle = null, coverTimer = 0, coverAsks = 0;
   function cover() {
     if (!IS_TOP || !restore || !restore.sure || fullscreenElement() || windowIsSmall() || !document.body) return;
+    if (onYouTube() && !onWatchPage()) return;
     const v = restore.v && restore.v.isConnected ? restore.v : biggestVideo();
     const el = (restore.el && restore.el.isConnected && restore.el !== document.documentElement && restore.el !== document.body)
       ? restore.el : (v ? playerBox(v) : null);
@@ -768,7 +785,7 @@
     const link = [...document.querySelectorAll('a[href]')].find((a) => {
       try { const u = new URL(a.href, location.href); return u.origin === location.origin && u.pathname === '/' && !u.search; } catch (_) { return false; }
     });
-    dbg(link ? 'Home: opening' : 'Home: no Home link, full page load', true);
+    dbg(link ? 'Home: opening' : 'Home: no Home link, full page load');
     if (link) link.click(); else location.assign(location.origin + '/');
   }
 
@@ -846,8 +863,7 @@
   let keepAlive = null, keepAliveUrl = null, keepAliveTimer = 0;
   function silentWavUrl() {
     if (keepAliveUrl) return keepAliveUrl;
-    // 10 seconds: Firefox ignores very short sounds for media buttons, and on YouTube Home this
-    // sound is all there is.
+    // 10 seconds: Firefox ignores very short sounds for media buttons.
     const rate = 8000, n = rate * 10;            // 10 seconds, 8 kHz, 16-bit mono
     const buf = new ArrayBuffer(44 + n * 2), d = new DataView(buf);
     const str = (o, t) => { for (let i = 0; i < t.length; i++) d.setUint8(o + i, t.charCodeAt(i)); };
@@ -879,6 +895,9 @@
     const v = e.target;
     if (v === keepAlive || v.tagName !== 'VIDEO' || !onWatchPage()) return;
     if (!v.muted && v.volume) videoStarted = true;
+    // Playing again (by any means) ends a wheel pause; a quick undo by YouTube right after the
+    // pause doesn't count, the pause retry handles that.
+    if (wheelPauseAt && Date.now() - wheelPauseAt > 1500) wheelPauseAt = 0;
     if (keepAlive) dbg('video playing: near-silent sound stopped');
     stopKeepAlive();
   }, true);
@@ -1058,9 +1077,9 @@
     picker.sel = (picker.sel + 1) % picker.tiles.length;
     drawPicker();
   }
-  // Seek ▼ is the OK button: with the box open it chooses the boxed tile right away.
-  // On a video page it is otherwise play/pause (playing also goes fullscreen);
-  // anywhere else on YouTube (Home, results...) it opens the box.
+  // Seek ▼ is the OK button: with the strip open it chooses the boxed tile right away.
+  // On a video page it is otherwise play/pause (playing also goes fullscreen).
+  // Off a video page (Home, results...) the wheel does nothing.
   function onSeekPrev() {
     dbg('car media command: previoustrack (seek ▼)');
     if (picker && !picker.box.isConnected) closePicker();
@@ -1105,7 +1124,9 @@
       if (document.visibilityState !== 'visible') { hiddenAt = Date.now(); return; }
       if (!hiddenAt || Date.now() - hiddenAt < 800) return;
       hiddenAt = 0;
-      if (!onWatchPage() || audibleVideoPlaying() || !keepAlive || keepAlive.paused) return;
+      // Only for a video paused from the wheel (the near-silent sound may have been stopped while away).
+      const v = biggestVideo();
+      if (!onWatchPage() || !wheelPauseAt || !v || !v.paused || audibleVideoPlaying()) return;
       dbg('back in Firefox: telling the car again');
       startKeepAlive();
     });
@@ -1118,9 +1139,14 @@
       const path = location.pathname + location.search;
       if (path === lastPath) return;
       lastPath = path;
-      if (picker && !picker.box.isConnected) closePicker();
+      // A different page: the strip's videos and any fullscreen to bring back belong to the old one.
+      closePicker();
       dbg('page: ' + path);
-      if (!onWatchPage() && !pendingWatch) stopKeepAlive();
+      if (!onWatchPage()) {
+        clearRestore();
+        if (carTap && carTap.mode === 'restore') cancelCarTap();
+        if (!pendingWatch) stopKeepAlive();
+      }
     }, 1000);
     // Keyboard: H = YouTube Home (not while typing in a box).
     addEventListener('keydown', (e) => {
