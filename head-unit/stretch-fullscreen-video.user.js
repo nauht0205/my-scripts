@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.35
+// @version      5.36
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -530,7 +530,7 @@
       markUsed(t);
       lastUsedMark = t;
     }
-    if (lastFrame && t - lastFrame > 1200) { lastAway = t; if (restore) restore.sure = true; dbg('away detected (' + Math.round((t - lastFrame) / 100) / 10 + 's gap)'); }
+    if (lastFrame && t - lastFrame > 1200) { lastAway = t; makeSure(); dbg('away detected (' + Math.round((t - lastFrame) / 100) / 10 + 's gap)'); }
     lastFrame = t;
     requestAnimationFrame(beat);
   }
@@ -546,6 +546,12 @@
 
   function hideHint() { if (hint) { hint.remove(); hint = null; } }
   function clearRestore() { restore = null; hideHint(); uncover(); }
+  // An app switch confirms the restore (if it hasn't run out).
+  function makeSure() {
+    if (!restore) return;
+    if (!restore.sure && Date.now() > restore.until) { clearRestore(); return; }
+    if (!restore.sure) { restore.sure = true; restore.until = Date.now() + 12 * 60 * 60 * 1000; }
+  }
 
   // ---- Coming back from another app: never show the page out of fullscreen ----
   // Android drops fullscreen when you switch apps, and the browser only allows it back after a tap.
@@ -554,6 +560,7 @@
   let coverEl = null, coverStyle = null, coverTimer = 0, coverAsks = 0;
   function cover() {
     if (!IS_TOP || !restore || !restore.sure || fullscreenElement() || windowIsSmall() || !document.body) return;
+    if (Date.now() > restore.until) { clearRestore(); return; }
     if (onYouTube() && !onWatchPage()) return;
     const v = restore.v && restore.v.isConnected ? restore.v : biggestVideo();
     const el = (restore.el && restore.el.isConnected && restore.el !== document.documentElement && restore.el !== document.body)
@@ -587,9 +594,12 @@
     if (coverEl) { coverEl.removeAttribute('data-sv-cover'); coverEl = null; dbg('cover off'); }
   }
 
+  // The "Tap to return to fullscreen" pill is no longer shown: after an app switch the
+  // MacroDroid tap restores by itself, and leaving fullscreen any other way (console Back)
+  // is on purpose. ▼ twice or a double-tap / double-click goes back to fullscreen.
+  const SHOW_PILL = false;
   function showHint() {
-    // Only when a tap elsewhere would not restore; otherwise any tap (or MacroDroid's) does it.
-    if (hint || !IS_TOP || !document.body || !restore || restore.sure || windowIsSmall() || fullscreenElement()) return;
+    if (!SHOW_PILL || hint || !IS_TOP || !document.body || !restore || restore.sure || windowIsSmall() || fullscreenElement()) return;
     hint = document.createElement('div');
     hint.textContent = '⛶  Tap to return to fullscreen';
     hint.style.cssText = 'position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:2147483647;' +
@@ -598,8 +608,10 @@
     document.body.appendChild(hint);
   }
 
+  // An exit with no touch and no app switch yet only waits 3 s to see whether an app switch
+  // follows (Android can end fullscreen just before it says the page is hidden).
   function armRestore(v, el, sure) {
-    restore = { v, el, sure, until: Date.now() + 12 * 60 * 60 * 1000 };
+    restore = { v, el, sure, until: Date.now() + (sure ? 12 * 60 * 60 * 1000 : 3000) };
     dbg('restore armed, any tap=' + sure);
     showHint();
     if (!document.hidden) cover();
@@ -621,7 +633,7 @@
       lastAway = Date.now();
       hideHint();
       uncover();
-      if (restore) restore.sure = true;
+      makeSure();
       // Fullscreen ended just before the window shrank into the mini player.
       if (IS_TOP && lastExit && Date.now() - lastExit.time < 4000) { armRestore(lastExit.v, lastExit.el, true); lastExit = null; }
     } else {
@@ -632,7 +644,7 @@
 
   document.addEventListener('visibilitychange', () => {
     dbg('page ' + (document.hidden ? 'hidden' : 'visible'));
-    if (document.hidden) { lastAway = Date.now(); if (restore) restore.sure = true; hideHint(); }
+    if (document.hidden) { lastAway = Date.now(); makeSure(); hideHint(); }
     else { showHint(); cover(); }
   });
   // Coming back from another app: if the page still thinks it is fullscreen but the window
@@ -646,7 +658,7 @@
     }, 700);
   });
   addEventListener('pageshow', () => showHint());
-  addEventListener('blur', () => { if (!IS_TOP) return; lastAway = Date.now(); if (restore) restore.sure = true; dbg('window blur'); });
+  addEventListener('blur', () => { if (!IS_TOP) return; lastAway = Date.now(); makeSure(); dbg('window blur'); });
   addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); showHint(); cover(); });
 
   document.addEventListener('fullscreenchange', () => {
@@ -696,7 +708,8 @@
     if (!restore || fullscreenElement() || windowIsSmall()) return;
     if (Date.now() > restore.until) { clearRestore(); return; }
     const onPill = hint && e.target instanceof Node && hint.contains(e.target);
-    if (!restore.sure && lastAway > fsEnterAt) restore.sure = true;
+    if (!restore.sure && lastAway > fsEnterAt) makeSure();
+    if (!restore) return;
     dbg(e.type + ': pill=' + !!onPill + ' anytap=' + restore.sure);
     if (!onPill && !restore.sure) {
       if (e.type === 'touchend') clearRestore();   // tapped elsewhere: dismiss, let the page have the tap
@@ -710,7 +723,8 @@
   // finger go down without coming up (YouTube treats that as press-and-hold = 2x speed).
   addEventListener('touchstart', (e) => {
     if (!restore || fullscreenElement() || windowIsSmall()) return;
-    if (!restore.sure && lastAway > fsEnterAt) restore.sure = true;
+    if (!restore.sure && lastAway > fsEnterAt) makeSure();
+    if (!restore) return;
     const onPill = hint && e.target instanceof Node && hint.contains(e.target);
     if (!restore.sure && !onPill) return;
     if (e.cancelable) e.preventDefault();
