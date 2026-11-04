@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.32
+// @version      5.33
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -926,6 +926,32 @@
       if (r && r.length) { const start = r.start(0), end = r.end(r.length - 1); if (end - start > 30 && end - v.currentTime > 10) v.currentTime = end - 3; }
     } catch (_) {}
   }
+
+  // Opening a live stream (tap, click, wheel or reload): YouTube can start it at the beginning of
+  // the stream instead of at live. The first time each live video plays, jump to live once, but
+  // only when there is a real stretch behind live (a half-loaded stream reports a tiny range, and
+  // jumping then sent it back to the start).
+  const liveChecked = new Set();
+  document.addEventListener('playing', (e) => {
+    const v = e.target;
+    if (!IS_TOP || !v || v.tagName !== 'VIDEO' || !onWatchPage()) return;
+    const id = videoIdOf(location.href);
+    if (!id || liveChecked.has(id)) return;
+    const check = (left) => {
+      if (videoIdOf(location.href) !== id || !v.isConnected || v.paused) { if (left > 0) setTimeout(() => check(left - 1), 1500); return; }
+      if (!isLive(v)) { if (v.readyState >= 2 && isFinite(v.duration) && v.duration > 0) liveChecked.add(id); else if (left > 0) setTimeout(() => check(left - 1), 1500); return; }
+      let start = 0, end = 0;
+      try { const r = v.seekable; if (r && r.length) { start = r.start(0); end = r.end(r.length - 1); } } catch (_) {}
+      if (end - start < 60) { if (left > 0) setTimeout(() => check(left - 1), 1500); return; }   // range not real yet
+      liveChecked.add(id);
+      if (end - v.currentTime < 45) return;                                                       // already at live
+      dbg('live stream opened behind live: jumping to live');
+      try { const p = ytPlayer(); if (p && typeof p.seekToLiveHead === 'function') p.seekToLiveHead(); } catch (_) {}
+      // Check it moved; otherwise jump there directly.
+      setTimeout(() => { try { if (v.isConnected && end - v.currentTime > 45) v.currentTime = end - 3; } catch (_) {} }, 1000);
+    };
+    setTimeout(() => check(6), 1200);
+  }, true);
 
   // A quick ▶ / ❚❚ in the middle of the screen, so you can see the wheel press arrived.
   let pressIcon = null;
