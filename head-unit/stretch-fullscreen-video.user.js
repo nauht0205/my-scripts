@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.33
+// @version      5.34
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -939,7 +939,8 @@
     if (!id || liveChecked.has(id)) return;
     const check = (left) => {
       if (videoIdOf(location.href) !== id || !v.isConnected || v.paused) { if (left > 0) setTimeout(() => check(left - 1), 1500); return; }
-      if (!isLive(v)) { if (v.readyState >= 2 && isFinite(v.duration) && v.duration > 0) liveChecked.add(id); else if (left > 0) setTimeout(() => check(left - 1), 1500); return; }
+      // YouTube may only say it is live a few seconds in, so keep checking for a while.
+      if (!isLive(v)) { if (left > 0) setTimeout(() => check(left - 1), 1500); return; }
       let start = 0, end = 0;
       try { const r = v.seekable; if (r && r.length) { start = r.start(0); end = r.end(r.length - 1); } } catch (_) {}
       if (end - start < 60) { if (left > 0) setTimeout(() => check(left - 1), 1500); return; }   // range not real yet
@@ -950,7 +951,7 @@
       // Check it moved; otherwise jump there directly.
       setTimeout(() => { try { if (v.isConnected && end - v.currentTime > 45) v.currentTime = end - 3; } catch (_) {} }, 1000);
     };
-    setTimeout(() => check(6), 1200);
+    setTimeout(() => check(10), 1200);
   }, true);
 
   // A quick ▶ / ❚❚ in the middle of the screen, so you can see the wheel press arrived.
