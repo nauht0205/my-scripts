@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.37
+// @version      5.38
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -223,7 +223,8 @@
     el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:2147483647;' +
       'background:rgba(0,0,0,.45);color:rgba(255,255,255,.7);font:600 15px/1.2 sans-serif;padding:7px 14px;border-radius:16px;' +
       'pointer-events:none;';
-    carTap = { el, mode, pressed: false, timer: setTimeout(cancelCarTap, 6000) };
+    // A restore label lives 2.5 s and is then shown again fresh if needed, so MacroDroid sees it appear anew.
+    carTap = { el, mode, pressed: false, timer: setTimeout(cancelCarTap, mode === 'restore' ? 2500 : 6000) };
     const show = () => { if (carTap && carTap.el === el) (fullscreenElement() || document.body).appendChild(el); };
     if (document.body) show(); else document.addEventListener('DOMContentLoaded', show, { once: true });
   }
@@ -557,7 +558,7 @@
   // Android drops fullscreen when you switch apps, and the browser only allows it back after a tap.
   // Until that tap (MacroDroid's, or yours), the video already fills the whole page, stretched,
   // so there is no "normal page" moment in between.
-  let coverEl = null, coverStyle = null, coverTimer = 0, coverAsks = 0;
+  let coverEl = null, coverStyle = null, coverTimer = 0, coverAsks = 0, coverAsking = false;
   function cover() {
     if (!IS_TOP || !restore || !restore.sure || fullscreenElement() || windowIsSmall() || !document.body) return;
     if (Date.now() > restore.until) { clearRestore(); return; }
@@ -580,17 +581,19 @@
     hideHint();
     // Ask MacroDroid for the tap that brings fullscreen back. Same for every way back to Firefox
     // (AUDIO, Hamilton home, recent apps...). A short wait first: Firefox refuses fullscreen
-    // while it is still coming to the front. Up to 4 tries if a tap gets refused or missed.
+    // while it is still coming to the front. It never gives up: it keeps asking (every 3 s, then
+    // every 8 s) until fullscreen is really back or you leave the video.
+    if (coverAsking) return;
+    coverAsking = true;
     clearTimeout(coverTimer);
     coverTimer = setTimeout(function ask() {
-      if (!restore || !coverEl || fullscreenElement() || document.hidden || windowIsSmall()) return;
-      if (coverAsks >= 4) return;
-      if (!carTap) { coverAsks++; dbg('cover: asking for the tap'); requestCarTap('restore'); }
-      coverTimer = setTimeout(ask, 2500);
+      if (!restore || !coverEl || fullscreenElement() || document.hidden || windowIsSmall()) { coverAsking = false; return; }
+      if (!carTap) { coverAsks++; dbg('cover: asking for the tap #' + coverAsks); requestCarTap('restore'); }
+      coverTimer = setTimeout(ask, coverAsks < 10 ? 3000 : 8000);
     }, 500);
   }
   function uncover() {
-    clearTimeout(coverTimer);
+    clearTimeout(coverTimer); coverAsking = false;
     if (coverEl) { coverEl.removeAttribute('data-sv-cover'); coverEl = null; dbg('cover off'); }
   }
 
@@ -645,7 +648,7 @@
   document.addEventListener('visibilitychange', () => {
     dbg('page ' + (document.hidden ? 'hidden' : 'visible'));
     if (document.hidden) { lastAway = Date.now(); makeSure(); hideHint(); }
-    else { showHint(); cover(); nudgeRepaint(); }
+    else { coverAsks = 0; showHint(); cover(); nudgeRepaint(); }
   });
   // Back from another app Firefox sometimes leaves the page undrawn (a plain purple screen).
   // A tiny change to the page makes it draw again; repeated a few times while it comes back.
@@ -673,7 +676,20 @@
   });
   addEventListener('pageshow', () => showHint());
   addEventListener('blur', () => { if (!IS_TOP) return; lastAway = Date.now(); makeSure(); dbg('window blur'); });
-  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); showHint(); cover(); nudgeRepaint(); });
+  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); coverAsks = 0; showHint(); cover(); nudgeRepaint(); });
+
+  // Watchdog: Firefox doesn't always say when it comes back to the front, so every second check
+  // by itself. Fullscreen still on paper but the window isn't full size: drop it so the restore
+  // starts. A restore waiting (after an app switch) but nothing asking: cover and ask again.
+  if (IS_TOP) setInterval(() => {
+    if (document.hidden || windowIsSmall()) return;
+    const fs = fullscreenElement();
+    if (fs) {
+      if (lastAway > fsEnterAt && innerHeight < screen.height * 0.9 && Date.now() - lastAway > 700) { dbg('watchdog: stale fullscreen'); exitFullscreen(); }
+      return;
+    }
+    if (restore && restore.sure && !coverAsking) { dbg('watchdog: restore waiting, asking'); coverAsks = 0; cover(); }
+  }, 1000);
 
   document.addEventListener('fullscreenchange', () => {
     const fs = fullscreenElement();
