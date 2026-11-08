@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.38
+// @version      5.39
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -500,6 +500,11 @@
   let lastSmall = 0, lastAway = 0, lastTouch = 0, ourExitAt = 0;
   let lastExit = null, restore = null, hint = null, lastFsEl = null, fsEnterAt = 0;
 
+  // On screen: Firefox says visible, or animation frames are running (Firefox sometimes still
+  // reports the page hidden after coming back).
+  let lastFrame = 0;
+  function onScreen() { return !document.hidden || (lastFrame && Date.now() - lastFrame < 1000); }
+
   function windowIsSmall() {
     return innerWidth < screen.width * 0.6 || innerHeight < screen.height * 0.6;
   }
@@ -507,7 +512,32 @@
   // On-screen log (bottom-left) for troubleshooting. Set to true to show it.
   const DEBUG = false;
   let dbgBox = null, dbgTimer = 0;
+  // Silent recorder: the last 80 events are kept (also across reloads) and shown only when you
+  // press L on the keyboard. Nothing appears on screen otherwise.
+  const REC_KEY = 'sv_rec';
+  function rec(msg) {
+    if (!IS_TOP) return;
+    try {
+      const t = new Date(), ts = t.toTimeString().slice(0, 8) + '.' + String(t.getMilliseconds()).padStart(3, '0').slice(0, 1);
+      const lines = (localStorage.getItem(REC_KEY) || '').split('\n').filter(Boolean);
+      lines.push(ts + ' ' + msg);
+      localStorage.setItem(REC_KEY, lines.slice(-80).join('\n'));
+    } catch (_) {}
+  }
+  let recBox = null;
+  function toggleRecorder() {
+    if (recBox) { recBox.remove(); recBox = null; return; }
+    let text = '';
+    try { text = (localStorage.getItem(REC_KEY) || '').split('\n').slice(-30).join('\n'); } catch (_) {}
+    recBox = document.createElement('div');
+    recBox.textContent = 'v5.39 recorder (L to close)\n' + (text || '(empty)');
+    recBox.style.cssText = 'position:fixed;left:8px;top:8px;right:8px;bottom:8px;z-index:2147483647;background:rgba(0,0,0,.9);color:#7f7;' +
+      'font:13px/1.25 monospace;padding:8px 12px;border-radius:8px;white-space:pre;overflow:hidden;column-count:2;column-gap:24px;';
+    (fullscreenElement() || document.body).appendChild(recBox);
+    setTimeout(() => { if (recBox) { recBox.remove(); recBox = null; } }, 120000);
+  }
   function dbg(msg) {
+    rec(msg);
     if (!DEBUG || !IS_TOP || !document.body) return;
     if (!dbgBox) {
       dbgBox = document.createElement('div');
@@ -523,7 +553,6 @@
 
   // Animation frames stop while Firefox is in the background, so a long gap between frames
   // means you were in another app, even if Firefox never reports the page as hidden.
-  let lastFrame = 0;
   function beat(now) {
     const t = Date.now();
     if (onYouTube() && t - lastUsedMark > 5000) {
@@ -531,7 +560,10 @@
       markUsed(t);
       lastUsedMark = t;
     }
-    if (lastFrame && t - lastFrame > 1200) { lastAway = t; makeSure(); dbg('away detected (' + Math.round((t - lastFrame) / 100) / 10 + 's gap)'); }
+    if (lastFrame && t - lastFrame > 1200) {
+      lastAway = t; makeSure(); dbg('away detected (' + Math.round((t - lastFrame) / 100) / 10 + 's gap)');
+      setTimeout(onReturn, 0);   // frames are running again: we are back, even if Firefox never said so
+    }
     lastFrame = t;
     requestAnimationFrame(beat);
   }
@@ -587,7 +619,7 @@
     coverAsking = true;
     clearTimeout(coverTimer);
     coverTimer = setTimeout(function ask() {
-      if (!restore || !coverEl || fullscreenElement() || document.hidden || windowIsSmall()) { coverAsking = false; return; }
+      if (!restore || !coverEl || fullscreenElement() || !onScreen() || windowIsSmall()) { coverAsking = false; return; }
       if (!carTap) { coverAsks++; dbg('cover: asking for the tap #' + coverAsks); requestCarTap('restore'); }
       coverTimer = setTimeout(ask, coverAsks < 10 ? 3000 : 8000);
     }, 500);
@@ -617,7 +649,7 @@
     restore = { v, el, sure, until: Date.now() + (sure ? 12 * 60 * 60 * 1000 : 3000) };
     dbg('restore armed, any tap=' + sure);
     showHint();
-    if (!document.hidden) cover();
+    if (onScreen()) cover();
   }
 
   // Touches inside iframes (embedded players) count as touches on the page.
@@ -648,7 +680,7 @@
   document.addEventListener('visibilitychange', () => {
     dbg('page ' + (document.hidden ? 'hidden' : 'visible'));
     if (document.hidden) { lastAway = Date.now(); makeSure(); hideHint(); }
-    else { coverAsks = 0; showHint(); cover(); nudgeRepaint(); }
+    else onReturn();
   });
   // Back from another app Firefox sometimes leaves the page undrawn (a plain purple screen).
   // A tiny change to the page makes it draw again; repeated a few times while it comes back.
@@ -676,13 +708,51 @@
   });
   addEventListener('pageshow', () => showHint());
   addEventListener('blur', () => { if (!IS_TOP) return; lastAway = Date.now(); makeSure(); dbg('window blur'); });
-  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); coverAsks = 0; showHint(); cover(); nudgeRepaint(); });
+  addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); onReturn(); });
+
+  // Back in Firefox (however we noticed): restore fullscreen, redraw the page, and make sure the
+  // video is really drawing frames again.
+  let returnAt = 0;
+  function onReturn() {
+    const t = Date.now();
+    if (t - returnAt < 300) return;
+    returnAt = t;
+    { const v = (lastStretched && lastStretched.isConnected) ? lastStretched : biggestVideo();
+      dbg('BACK: hidden=' + document.hidden + ' fs=' + !!fullscreenElement() + ' restore=' + (restore ? (restore.sure ? 'sure' : 'maybe') : 'none') +
+        ' cover=' + !!coverEl + ' tap=' + (carTap ? carTap.mode || 'play' : 'none') + ' h=' + innerHeight + '/' + screen.height +
+        ' video=' + (v ? (v.paused ? 'paused' : 'playing') + ' rs' + v.readyState : 'none') + ' path=' + location.pathname); }
+    coverAsks = 0; showHint(); cover(); nudgeRepaint(); checkVideoDrawing();
+  }
+
+  // Firefox can come back with the video playing (sound on) but its picture never drawn again:
+  // a black screen, even in fullscreen. If no new picture arrives, ask the video for one by
+  // seeking to the exact spot it is already at (no reload, no jump).
+  let drawTimer = 0;
+  function checkVideoDrawing() {
+    if (!IS_TOP) return;
+    clearTimeout(drawTimer);
+    drawTimer = setTimeout(function check(tries) {
+      tries = tries || 0;
+      if (!onScreen()) return;
+      const v = (lastStretched && lastStretched.isConnected) ? lastStretched : biggestVideo();
+      if (!v || v.paused || v.ended || v.readyState < 2 || typeof v.requestVideoFrameCallback !== 'function') return;
+      let drew = false;
+      const id = v.requestVideoFrameCallback(() => { drew = true; });
+      drawTimer = setTimeout(() => {
+        if (drew || v.paused || !onScreen()) return;
+        try { v.cancelVideoFrameCallback(id); } catch (_) {}
+        dbg('video not drawing: asking for a fresh picture');
+        try { v.currentTime = v.currentTime; } catch (_) {}
+        if (tries < 2) drawTimer = setTimeout(() => check(tries + 1), 1500);
+      }, 1200);
+    }, 600);
+  }
 
   // Watchdog: Firefox doesn't always say when it comes back to the front, so every second check
   // by itself. Fullscreen still on paper but the window isn't full size: drop it so the restore
   // starts. A restore waiting (after an app switch) but nothing asking: cover and ask again.
   if (IS_TOP) setInterval(() => {
-    if (document.hidden || windowIsSmall()) return;
+    if (!onScreen() || windowIsSmall()) return;
     const fs = fullscreenElement();
     if (fs) {
       if (lastAway > fsEnterAt && innerHeight < screen.height * 0.9 && Date.now() - lastAway > 700) { dbg('watchdog: stale fullscreen'); exitFullscreen(); }
@@ -723,7 +793,7 @@
     setTimeout(() => {
       if (fullscreenElement()) { dbg('restore OK'); return; }
       dbg('fullscreen restore failed (browser refused)');
-      if (!restore && !document.hidden && !windowIsSmall()) armRestore(r.v, r.el, true);
+      if (!restore && onScreen() && !windowIsSmall()) armRestore(r.v, r.el, true);
     }, 1200);
     if (r.v && r.v.isConnected) { goFullscreen(r.v); return; }
     if (r.el && r.el.isConnected && r.el.requestFullscreen) {
@@ -1220,15 +1290,16 @@
         if (!pendingWatch) stopKeepAlive();
       }
     }, 1000);
-    // Keyboard: H = YouTube Home (not while typing in a box).
+    // Keyboard: H = YouTube Home, L = show/hide the recorder (not while typing in a box).
     addEventListener('keydown', (e) => {
-      if (e.key !== 'h' && e.key !== 'H') return;
+      const k = (e.key || '').toLowerCase();
+      if (k !== 'h' && k !== 'l') return;
       if (e.ctrlKey || e.altKey || e.metaKey) return;
       const t = e.target;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       e.preventDefault();
       e.stopPropagation();
-      goHome();
+      if (k === 'l') toggleRecorder(); else goHome();
     }, true);
   }
 
