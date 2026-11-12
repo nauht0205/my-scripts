@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stretch Fullscreen Video
 // @namespace    head-unit-fullscreen
-// @version      5.39
+// @version      5.40
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/head-unit/stretch-fullscreen-video.user.js
 // @description  Stretches fullscreen video to fill the whole screen (no crop) and keeps it stretched. Tapping a YouTube video opens it straight in fullscreen, and so does opening/reloading a video page (with the MacroDroid tap macro); on a video, steering-wheel seek ▲ opens a strip (Close, YouTube Home, then suggestions) and moves along it, seek ▼ chooses; otherwise seek ▼ is play/pause (playing also goes fullscreen; a live stream resumes at live). Double-tap (or touchpad double-click) the middle of a video to go fullscreen or exit (sides keep the player's own skip). After switching apps (CarPlay, Hamilton home...), the video fills the screen and the MacroDroid tap returns it to fullscreen. After 10+ minutes unused, Firefox opens on YouTube Home. Keyboard H = YouTube Home.
@@ -216,6 +216,7 @@
   // mode 'restore': the tap brings back fullscreen after an app switch (nothing else changes).
   function requestCarTap(mode) {
     if (window !== window.top) return;
+    if (mode !== 'restore') stayOut = false;   // an explicit ask (▼, a chosen video, a page load)
     cancelCarTap();
     const el = document.createElement('div');
     el.textContent = '⛶  ' + CAR_TAP_TEXT;
@@ -253,13 +254,48 @@
     if (target && (box.contains(target) || target.contains(box))) target.click();
   }
 
-  function useCarTap() {
+  // MacroDroid taps the exact middle of the screen. It does so when the script shows its label,
+  // and also by itself whenever Firefox's address bar shows a YouTube video (= not fullscreen),
+  // for example after coming back from CarPlay. So a tap on the exact middle is treated as
+  // MacroDroid's even when the script asked for nothing: it never reaches the page, and it means
+  // "play and go fullscreen now". The script doesn't have to have noticed anything itself.
+  function isMiddleOfScreen(t) {
+    if (!t) return false;
+    const tol = 12;
+    if (Math.abs(t.clientX - innerWidth / 2) > tol) return false;
+    const bars = Math.max(0, screen.height - innerHeight);          // Android bar + address bar above the page
+    return t.clientY >= screen.height / 2 - bars - tol && t.clientY <= screen.height / 2 + tol;
+  }
+
+  let lastMacroActAt = 0, staleFixAt = 0;
+  function onMacroTap(blind) {
+    const now = Date.now();
     const mode = carTap && carTap.mode;
+    const asked = !!carTap;
     cancelCarTap();
-    if (mode === 'restore') { if (restore) doRestore(); return; }
-    if (typeof stopKeepAlive === 'function') stopKeepAlive();
-    startPlayback();
-    if (fullscreenElement()) return;
+    if (now - lastMacroActAt < 900) { dbg('macro tap: repeat ignored'); return; }
+    if (fullscreenElement()) {
+      // MacroDroid only taps unasked when it can see the address bar. So if the page still
+      // believes it is fullscreen, that belief is stale: drop it, the next tap goes fullscreen for real.
+      if (!asked && blind && lastAway > fsEnterAt) {
+        lastMacroActAt = now; staleFixAt = now;
+        dbg('macro tap: page says fullscreen but the address bar is showing: resetting');
+        exitFullscreen();
+      } else dbg('macro tap: already fullscreen');
+      return;
+    }
+    if (!asked) {
+      if (onYouTube() ? !onWatchPage() : !restore) { dbg('macro tap: nothing to do on this page'); return; }
+      if (stayOut) { dbg('macro tap: fullscreen was left on purpose, staying out'); return; }
+    }
+    lastMacroActAt = now;
+    const wantPlay = (asked && mode !== 'restore') || !pausedOnPurpose();
+    dbg('macro tap: ' + (asked ? 'asked (' + (mode || 'play') + ')' : 'address bar seen') + ', play=' + wantPlay + ', restore=' + !!restore);
+    // Fullscreen first (the restore must not be taken by a click startPlayback sends to the player).
+    if (restore) doRestore(); else enterFullscreenNow();
+    if (wantPlay) { if (typeof stopKeepAlive === 'function') stopKeepAlive(); startPlayback(); }
+  }
+  function enterFullscreenNow() {
     fsGuard = { until: Date.now() + 3000 };
     const v = biggestVideo();
     if (v && v.getBoundingClientRect().height > 100) { goFullscreen(v); return; }
@@ -267,17 +303,23 @@
     if (box && box.requestFullscreen) { try { const p = box.requestFullscreen(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
   }
 
+  let macroTouch = null;
   addEventListener('touchstart', (e) => {
-    if (!carTap) return;
-    carTap.pressed = true;
+    macroTouch = null;
+    const middle = window === window.top && e.touches.length === 1 && isMiddleOfScreen(e.touches[0]) && (onYouTube() || !!restore);
+    if (!carTap && !middle) return;
+    macroTouch = { blind: middle };
     if (e.cancelable) e.preventDefault();
     e.stopImmediatePropagation();
   }, { capture: true, passive: false });
   addEventListener('touchend', (e) => {
-    if (!carTap || !carTap.pressed) return;
+    const m = macroTouch;
+    if (!m) return;
+    macroTouch = null;
     if (e.cancelable) e.preventDefault();
     e.stopImmediatePropagation();
-    useCarTap();
+    swallowClicksUntil = Date.now() + 500;
+    onMacroTap(m.blind);
   }, { capture: true, passive: false });
 
 
@@ -499,6 +541,16 @@
   }
   let lastSmall = 0, lastAway = 0, lastTouch = 0, ourExitAt = 0;
   let lastExit = null, restore = null, hint = null, lastFsEl = null, fsEnterAt = 0;
+  // Fullscreen was left on purpose (console Back, the player's own button, a double-tap): stay out
+  // until the next video, the next ▼ play, or the next time fullscreen is entered.
+  let stayOut = false;
+  // The last time the video was paused, and whether a hand did it (wheel, click, key, touch).
+  let pauseInfo = null, lastUserAt = 0, leftAt = 0;
+  function pausedOnPurpose() {
+    if (wheelPauseAt) return true;
+    const v = biggestVideo();
+    return !!(v && v.paused && pauseInfo && pauseInfo.user);
+  }
 
   // On screen: Firefox says visible, or animation frames are running (Firefox sometimes still
   // reports the page hidden after coming back).
@@ -530,7 +582,7 @@
     let text = '';
     try { text = (localStorage.getItem(REC_KEY) || '').split('\n').slice(-30).join('\n'); } catch (_) {}
     recBox = document.createElement('div');
-    recBox.textContent = 'v5.39 recorder (L to close)\n' + (text || '(empty)');
+    recBox.textContent = 'v5.40 recorder (L to close)\n' + (text || '(empty)');
     recBox.style.cssText = 'position:fixed;left:8px;top:8px;right:8px;bottom:8px;z-index:2147483647;background:rgba(0,0,0,.9);color:#7f7;' +
       'font:13px/1.25 monospace;padding:8px 12px;border-radius:8px;white-space:pre;overflow:hidden;column-count:2;column-gap:24px;';
     (fullscreenElement() || document.body).appendChild(recBox);
@@ -561,6 +613,7 @@
       lastUsedMark = t;
     }
     if (lastFrame && t - lastFrame > 1200) {
+      if (leftAt < lastFrame - 5000) leftAt = lastFrame;   // Firefox never said it left: it left when the frames stopped
       lastAway = t; makeSure(); dbg('away detected (' + Math.round((t - lastFrame) / 100) / 10 + 's gap)');
       setTimeout(onReturn, 0);   // frames are running again: we are back, even if Firefox never said so
     }
@@ -582,8 +635,7 @@
   // An app switch confirms the restore (if it hasn't run out).
   function makeSure() {
     if (!restore) return;
-    if (!restore.sure && Date.now() > restore.until) { clearRestore(); return; }
-    if (!restore.sure) { restore.sure = true; restore.until = Date.now() + 12 * 60 * 60 * 1000; }
+    if (!restore.sure) { restore.sure = true; restore.until = Date.now() + 12 * 60 * 60 * 1000; dbg('restore confirmed by the app switch'); }
   }
 
   // ---- Coming back from another app: never show the page out of fullscreen ----
@@ -596,8 +648,9 @@
     if (Date.now() > restore.until) { clearRestore(); return; }
     if (onYouTube() && !onWatchPage()) return;
     const v = restore.v && restore.v.isConnected ? restore.v : biggestVideo();
-    const el = (restore.el && restore.el.isConnected && restore.el !== document.documentElement && restore.el !== document.body)
-      ? restore.el : (v ? playerBox(v) : null);
+    const kept = restore.el && restore.el.isConnected && restore.el !== document.documentElement && restore.el !== document.body &&
+      (restore.el.tagName === 'VIDEO' || restore.el.querySelector('video'));
+    const el = kept ? restore.el : (v ? playerBox(v) : null);
     if (!el) return;
     if (!coverStyle) {
       coverStyle = document.createElement('style');
@@ -646,10 +699,18 @@
   // An exit with no touch and no app switch yet only waits 3 s to see whether an app switch
   // follows (Android can end fullscreen just before it says the page is hidden).
   function armRestore(v, el, sure) {
-    restore = { v, el, sure, until: Date.now() + (sure ? 12 * 60 * 60 * 1000 : 3000) };
-    dbg('restore armed, any tap=' + sure);
+    const r = restore = { v, el, sure, until: Date.now() + 12 * 60 * 60 * 1000 };
+    const at = Date.now();
+    dbg('restore armed, sure=' + sure);
     showHint();
     if (onScreen()) cover();
+    if (sure) return;
+    // Not sure yet: if 3 s later the page is still on screen and no app switch happened, the exit
+    // was on purpose. (While Firefox is in the background this decides nothing: the return does.)
+    setTimeout(() => {
+      if (restore !== r || r.sure) return;
+      if (Date.now() - lastFrame < 500 && lastAway < at) { dbg('fullscreen was left on purpose: staying out'); stayOut = true; clearRestore(); }
+    }, 3200);
   }
 
   // Touches inside iframes (embedded players) count as touches on the page.
@@ -670,7 +731,7 @@
       uncover();
       makeSure();
       // Fullscreen ended just before the window shrank into the mini player.
-      if (IS_TOP && lastExit && Date.now() - lastExit.time < 4000) { armRestore(lastExit.v, lastExit.el, true); lastExit = null; }
+      if (IS_TOP && lastExit && Date.now() - lastExit.time < 4000) { stayOut = false; armRestore(lastExit.v, lastExit.el, true); lastExit = null; }
     } else {
       showHint();   // back to full size from the mini player
       cover();
@@ -679,7 +740,7 @@
 
   document.addEventListener('visibilitychange', () => {
     dbg('page ' + (document.hidden ? 'hidden' : 'visible'));
-    if (document.hidden) { lastAway = Date.now(); makeSure(); hideHint(); }
+    if (document.hidden) { lastAway = leftAt = Date.now(); makeSure(); hideHint(); }
     else onReturn();
   });
   // Back from another app Firefox sometimes leaves the page undrawn (a plain purple screen).
@@ -707,7 +768,7 @@
     }, 700);
   });
   addEventListener('pageshow', () => showHint());
-  addEventListener('blur', () => { if (!IS_TOP) return; lastAway = Date.now(); makeSure(); dbg('window blur'); });
+  addEventListener('blur', () => { if (!IS_TOP) return; lastAway = leftAt = Date.now(); makeSure(); dbg('window blur'); });
   addEventListener('focus', () => { if (IS_TOP) dbg('window focus'); onReturn(); });
 
   // Back in Firefox (however we noticed): restore fullscreen, redraw the page, and make sure the
@@ -721,8 +782,38 @@
       dbg('BACK: hidden=' + document.hidden + ' fs=' + !!fullscreenElement() + ' restore=' + (restore ? (restore.sure ? 'sure' : 'maybe') : 'none') +
         ' cover=' + !!coverEl + ' tap=' + (carTap ? carTap.mode || 'play' : 'none') + ' h=' + innerHeight + '/' + screen.height +
         ' video=' + (v ? (v.paused ? 'paused' : 'playing') + ' rs' + v.readyState : 'none') + ' path=' + location.pathname); }
-    coverAsks = 0; showHint(); cover(); nudgeRepaint(); checkVideoDrawing();
+    coverAsks = 0; showHint(); cover(); nudgeRepaint(); resumeAfterAway(); checkVideoDrawing();
+    if (autoStartKick) autoStartKick();
   }
+
+  // Android pauses the video when another app takes the sound (CarPlay music, a call...), and
+  // nothing starts it again: a paused video shows black after an app switch, and the car stops
+  // sending its buttons because nothing is playing. So a video that was paused by the switch
+  // (not by you) plays again when you are back. A live stream resumes at live.
+  let autoStartKick = null, resumeTimer = 0;
+  function resumeAfterAway() {
+    if (!IS_TOP || !onYouTube() || !onWatchPage()) return;
+    const v = (lastStretched && lastStretched.isConnected) ? lastStretched : biggestVideo();
+    const p = pauseInfo;
+    if (!v || !v.paused || v.ended || v.readyState < 1 || !p || p.user || wheelPauseAt) return;
+    if (p.at < leftAt - 2500) return;                       // paused well before leaving: not the switch
+    dbg('video was paused by the app switch: playing again');
+    if (Date.now() - p.at > 5000) goLive(v);
+    playVideo(v);
+    clearTimeout(resumeTimer);
+    resumeTimer = setTimeout(() => {
+      // Firefox refused to play without a tap: ask MacroDroid for one.
+      if (v.isConnected && v.paused && !pausedOnPurpose() && onScreen() && onWatchPage() && !carTap) { dbg('play refused: asking for the tap'); requestCarTap(); }
+    }, 1800);
+  }
+  document.addEventListener('pause', (e) => {
+    const v = e.target;
+    if (!IS_TOP || !v || v.tagName !== 'VIDEO' || !onWatchPage()) return;
+    const now = Date.now();
+    pauseInfo = { at: now, user: now - lastUserAt < 1000 || (wheelPauseAt && now - wheelPauseAt < 1500) };
+  }, true);
+  document.addEventListener('play', (e) => { if (e.target && e.target.tagName === 'VIDEO') pauseInfo = null; }, true);
+  for (const ev of ['mousedown', 'keydown', 'touchstart']) addEventListener(ev, (e) => { if (e.isTrusted) lastUserAt = Date.now(); }, true);
 
   // Firefox can come back with the video playing (sound on) but its picture never drawn again:
   // a black screen, even in fullscreen. If no new picture arrives, ask the video for one by
@@ -765,7 +856,7 @@
     const fs = fullscreenElement();
     if (IS_TOP) dbg(fs ? 'fullscreen ON' : 'fullscreen OFF (last touch ' + Math.round((Date.now() - lastTouch) / 100) / 10 + 's ago)');
     if (fs) {
-      lastFsEl = fs; fsEnterAt = Date.now(); coverAsks = 0; clearRestore();
+      lastFsEl = fs; fsEnterAt = Date.now(); coverAsks = 0; stayOut = false; clearRestore();
       if (carTap && carTap.mode === 'restore') cancelCarTap();   // fullscreen is back: no tap needed
       return;
     }
@@ -773,13 +864,14 @@
     const v = lastStretched && lastStretched.isConnected ? lastStretched : null;
     const el = lastFsEl;
     const now = Date.now();
-    if (now - ourExitAt < 1500) return;                                      // our double-tap
+    if (now - staleFixAt < 1500) { armRestore(v, el, true); return; }         // stale fullscreen dropped for MacroDroid's next tap
+    if (now - ourExitAt < 1500) { stayOut = true; return; }                  // our double-tap / double-click
     if (document.hidden || windowIsSmall() || now - lastSmall < 4000 || now - lastAway < 4000 || lastAway > fsEnterAt) {
-      armRestore(v, el, true);                                                // clearly the mini player
+      armRestore(v, el, true);                                                // an app switch (or the mini player)
     } else if (now - lastTouch < 1500) {
-      lastExit = { v, el, time: now };                                        // player's exit button
+      lastExit = { v, el, time: now }; stayOut = true;                        // player's exit button
     } else {
-      armRestore(v, el, false);                                               // no touch: offer the pill
+      armRestore(v, el, false);                                               // no touch: console Back, or an app switch about to be noticed
     }
   }, true);
 
@@ -806,7 +898,6 @@
 
   function onRestoreTap(e) {
     if (!restore || fullscreenElement() || windowIsSmall()) return;
-    if (Date.now() > restore.until) { clearRestore(); return; }
     const onPill = hint && e.target instanceof Node && hint.contains(e.target);
     if (!restore.sure && lastAway > fsEnterAt) makeSure();
     if (!restore) return;
@@ -1237,25 +1328,30 @@
   // 7 seconds, up to 4 more times. The wheel can't help there: the car sends no buttons
   // while nothing makes a sound.
   if (AUTO_START && IS_TOP && !leavingForHome && onYouTube() && location.pathname === '/watch') {
-    let tries = 0, asks = 0;
+    let tries = 0, asks = 0, askTimer = 0, checking = false;
     const stuck = () => {
-      if (videoStarted || fullscreenElement() || !onWatchPage() || document.visibilityState !== 'visible') return false;
+      if (videoStarted || stayOut || fullscreenElement() || !onWatchPage() || !onScreen()) return false;
       const v = biggestVideo();
       return !v || v.paused;
     };
     const ask = () => {
-      if (!stuck() || carTap) return;
-      dbg('page loaded: asking for the fullscreen tap');
-      requestCarTap();
-      if (++asks <= 4) setTimeout(ask, 7000);
+      clearTimeout(askTimer);
+      if (!stuck()) return;
+      if (!carTap) { dbg('page loaded: asking for the fullscreen tap'); requestCarTap(); asks++; }
+      if (asks <= 8) askTimer = setTimeout(ask, 7000);
     };
+    // Waits for the player to be there and the page to be on screen (a tab Firefox reloaded in
+    // the background only becomes visible when you come back, however long that takes).
     const check = () => {
-      if (fullscreenElement() || ++tries > 40) return;
-      const box = document.visibilityState === 'visible' ? playerElement() : null;
-      if (box && box.getBoundingClientRect().height > 100) { ask(); return; }
+      if (fullscreenElement() || videoStarted || ++tries > 480) { checking = false; return; }
+      const box = onScreen() ? playerElement() : null;
+      if (box && box.getBoundingClientRect().height > 100) { checking = false; ask(); return; }
       setTimeout(check, 250);
     };
-    addEventListener('load', () => setTimeout(check, 1500));
+    const start = () => { if (checking) return; checking = true; tries = 0; check(); };
+    addEventListener('load', () => setTimeout(start, 1500));
+    // Back in Firefox with the video still not started: start over.
+    autoStartKick = () => { if (!videoStarted && onWatchPage() && !fullscreenElement()) { asks = 0; start(); } };
   }
 
   // Back in Firefox after another app (CarPlay...) with a video paused from the wheel: start the
@@ -1283,10 +1379,11 @@
       lastPath = path;
       // A different page: the strip's videos and any fullscreen to bring back belong to the old one.
       closePicker();
+      stayOut = false; pauseInfo = null;
       dbg('page: ' + path);
       if (!onWatchPage()) {
         clearRestore();
-        if (carTap && carTap.mode === 'restore') cancelCarTap();
+        if (carTap && (carTap.mode === 'restore' || !pendingWatch)) cancelCarTap();
         if (!pendingWatch) stopKeepAlive();
       }
     }, 1000);
