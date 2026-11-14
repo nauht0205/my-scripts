@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.27
+// @version      6.28
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.27';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.28';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -662,9 +662,10 @@
       else if (d.error) status = `<span title="${esc(d.error)}">${cell('error', 0, C.orange, true)}</span>`;
       else if (s.onlyFlex) status = flexText(d.flexOpen || 0, d.flexListed || 0);
       else {
-        status = cell(STAR + ' ' + d.match, 5, d.match ? C.green : C.text, d.match > 0) +
-          cell('✗ ' + d.noMatch, 5.5, d.noMatch ? C.red : C.text, d.noMatch > 0);
-        if (d.flexListed) status += flexText(d.flexOpen, d.flexListed);
+        status = cell(STAR + ' ' + (d.match || 0), 5, d.match ? C.green : C.text, d.match > 0) +
+          cell('✗ ' + (d.noMatch || 0), 5.5, d.noMatch ? C.red : C.text, d.noMatch > 0);
+        // 6.28: sites that show spots (HOU8) get a small line under the row instead (keeps the row on one line)
+        if (d.flexListed && !(d.statusMode && d.listed != null)) status += flexText(d.flexOpen, d.flexListed);
       }
       // last batch change (+added -removed), shown for 24 h after it happened
       if (d && !d.error && d.changedAt && Date.now() - d.changedAt < 24 * 3600 * 1000 && (d.added || d.removed)) {
@@ -674,6 +675,11 @@
       line += `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden">${status}</span>`;
       line += `<span style="flex:none;white-space:nowrap">${siteBtn('open', s.name)}${siteBtn('copy', s.name)}</span>`;
       rows += `<div style="display:flex;align-items:center;gap:4px;padding:1px 0">${line}</div>`;
+      // 6.28 (Martin): ★ / ✗ count every listed schedule; how many have open spots goes on this line
+      if (d && !d.error && d.statusMode && d.listed != null) {
+        rows += `<div style="padding:0 0 2px 2ch;font-size:12px;line-height:1.3">${cell('open spots: ', 0, C.gray)}${cell((d.spotsOpen || 0) + ' of ' + d.listed, 0, d.spotsOpen ? C.blue : C.text, d.spotsOpen > 0)}` +
+          (d.flexListed ? `${cell(' | ', 0, C.gray)}${cell('flex ', 0, C.gray)}${cell(d.flexOpen + ' of ' + d.flexListed, 0, d.flexOpen ? C.blue : C.text, d.flexOpen > 0)}` : '') + `</div>`;
+      }
       if (isOpen) rows += siteList(s);
     });
 
@@ -699,7 +705,7 @@
     const cur = {};
     const events = [];
     const list = [];                     // every relevant schedule, for the box's site list
-    let openCount = 0, openMatches = 0, flexListed = 0, flexOpen = 0;
+    let openCount = 0, openMatches = 0, flexListed = 0, flexOpen = 0, listMatches = 0;
 
     let ord = 0;   // 6.16: the order Amazon sends the schedules in (to tell identical-looking cards apart)
     for (const j of jobs) {
@@ -714,6 +720,7 @@
         spots: av.statusMode ? (open ? 'spots: ' + cap(av.open.get(j.id)) : 'no spots') : '',
       });
       if (open) { openCount++; if (ev.match) openMatches++; }
+      if (ev.match) listMatches++;
       if (isFlex(j)) { flexListed++; if (open) flexOpen++; }
       if (prev && open && prev[j.id] !== true) {
         events.push({ j, ev, spots: av.statusMode ? av.open.get(j.id) : '', kind: prev[j.id] === false ? 'SPOTS OPENED' : 'NEW' });
@@ -735,7 +742,9 @@
     const change = (added || removed.length)
       ? { added, removed: removed.length, changedAt: Date.now() }
       : { added: old.added || 0, removed: old.removed || 0, changedAt: old.changedAt || 0 };
-    setSite(site.name, Object.assign({ match: openMatches, noMatch: openCount - openMatches, flexListed, flexOpen, statusMode: av.statusMode }, change));
+    // 6.28 (Martin): ★ / ✗ count every listed schedule, spots or not; sites that show spots (HOU8) also get
+    // "spots N/M" = schedules with open spots / listed. Sites without spots: listed = open, so nothing changes there.
+    setSite(site.name, Object.assign({ match: listMatches, noMatch: list.length - listMatches, flexListed, flexOpen, statusMode: av.statusMode, spotsOpen: openCount, listed: list.length }, change));
 
     // batch summary line at the top of the alert, e.g. "Now 10 listed · +10 new · -12 removed"
     const summary = `Now ${list.length} listed` + (added ? ` · +${added} new` : '') +
@@ -763,7 +772,7 @@
         : `#${site.rank} ${site.name} · ${what} (no match)`;
       notify(title, summary + '\n\n' + blocks.join('\n\n') + more + removedText, 5, matches.length ? 'star' : 'x', site);
     }
-    return { firstTime: prev === undefined, openCount, openMatches, flexListed, flexOpen };
+    return { firstTime: prev === undefined, openCount: list.length, openMatches: listMatches, flexListed, flexOpen, statusMode: av.statusMode, spotsOpen: openCount };
   }
 
   // ---------- full check ----------
@@ -789,11 +798,11 @@
         }
         log(site.name + ' ok (' + ((Date.now() - t0) / 1000).toFixed(1) + ' s): ' + (site.onlyFlex
           ? r.flexOpen + '/' + r.flexListed + ' flex open'
-          : r.openMatches + ' match, ' + (r.openCount - r.openMatches) + ' no match' + (r.flexListed ? ', ' + r.flexOpen + '/' + r.flexListed + ' flex open' : '')));
+          : r.openMatches + ' match, ' + (r.openCount - r.openMatches) + ' no match' + (r.flexListed ? ', ' + r.flexOpen + '/' + r.flexListed + ' flex open' : '') + (r.statusMode ? ', spots ' + r.spotsOpen + '/' + r.openCount : '')));
         saveJSON('seen2', seen);
         if (r.firstTime) baseline.push(site.onlyFlex
           ? `#${site.rank} ${site.name}: ${r.flexOpen}/${r.flexListed} flex open`
-          : `#${site.rank} ${site.name}: ⭐ ${r.openMatches}  ✗ ${r.openCount - r.openMatches}`);
+          : `#${site.rank} ${site.name}: ⭐ ${r.openMatches}  ✗ ${r.openCount - r.openMatches}` + (r.statusMode ? `  · spots ${r.spotsOpen}/${r.openCount}` : ''));
       } catch (e) {
         errors.push(site.name + ': ' + e.message);
         log('!! ' + site.name + ' error: ' + e.message);
@@ -803,7 +812,7 @@
     }
 
     if (baseline.length) {
-      notify('Transfer Schedule · started', 'Now watching (open schedules):\n' + baseline.join('\n') +
+      notify('Transfer Schedule · started', 'Now watching (listed schedules):\n' + baseline.join('\n') +
         '\n\nYou will be alerted when schedules are added or spots open.', 3, 'eyes');
     }
 
@@ -828,9 +837,9 @@
         const lines = SITES.map(x => {
           const d = s[x.name] || {};
           if (x.onlyFlex) return `#${x.rank} ${x.name}: ${d.flexOpen || 0}/${d.flexListed || 0} flex open`;
-          return `#${x.rank} ${x.name}: ⭐ ${d.match || 0}  ✗ ${d.noMatch || 0}` + (d.flexListed ? `  · ${d.flexOpen}/${d.flexListed} flex open` : '');
+          return `#${x.rank} ${x.name}: ⭐ ${d.match || 0}  ✗ ${d.noMatch || 0}` + (d.flexListed ? `  · ${d.flexOpen}/${d.flexListed} flex open` : '') + (d.statusMode && d.listed != null ? `  · spots ${d.spotsOpen || 0}/${d.listed}` : '');
         });
-        notify('Transfer Schedule · daily check', 'Still watching. Open schedules right now:\n' + lines.join('\n'), 2, 'calendar');
+        notify('Transfer Schedule · daily check', 'Still watching. Schedules listed right now:\n' + lines.join('\n'), 2, 'calendar');
         GM_setValue('summaryDay', today);
       }
     }
