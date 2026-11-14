@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Transfer Schedule
 // @namespace    martin.transfer
-// @version      6.26
+// @version      6.27
 // @updateURL    https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @downloadURL  https://raw.githubusercontent.com/nauht0205/my-scripts/main/transfer-schedule.user.js
 // @description  Watches internal-transfer schedules (new schedules + spots opening) at chosen sites, matches them against your preferences, and sends phone alerts via Pushover. Read-only: never applies. Hands-off: never reloads, redirects or changes any request on the page (safe alongside the VTO scripts); on the transfer page it only reads a copy of the schedule list the page loads, to label the cards. Reload-proof.
@@ -39,7 +39,7 @@
   } catch (_) {}
   const W = unsafeWindow;
   const IS_TOP = W.top === W.self;
-  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.26';
+  const VERSION = (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || '6.27';
 
   // ======================= CONFIG (edit here) =======================
   // Pushover (your phone alert channel). Paste YOUR OWN keys - User Key + an Application's API Token from pushover.net.
@@ -57,11 +57,12 @@
 
   // Sites in priority order (rank 1 = most wanted).
   // onlyFlex: true -> only flex schedules at that site are reported.
+  // 6.27: HOU8 now uses the same rules as the other sites (all schedules, not only flex) (Martin)
   const SITES = [
     { rank: 1, name: 'SAH2', id: '724a62c4-e102-44b5-aceb-0c47c860a30d' },
     { rank: 2, name: 'DHX1', id: 'fe73d011-309b-4520-a77e-6b0835021a2b' },
     { rank: 3, name: 'STX4', id: 'f2516a75-5cf0-4238-b686-48a62b2b23fd' },
-    { rank: 4, name: 'HOU8', id: '937b9275-3e99-4dea-904d-9927f2c34c21', onlyFlex: true },
+    { rank: 4, name: 'HOU8', id: '937b9275-3e99-4dea-904d-9927f2c34c21' },
   ];
 
   // Your schedule preferences (fixed schedules; flex always matches).
@@ -716,7 +717,7 @@
       if (isFlex(j)) { flexListed++; if (open) flexOpen++; }
       if (prev && open && prev[j.id] !== true) {
         events.push({ j, ev, spots: av.statusMode ? av.open.get(j.id) : '', kind: prev[j.id] === false ? 'SPOTS OPENED' : 'NEW' });
-      } else if (prev && !open && prev[j.id] === undefined && isFlex(j)) {
+      } else if (prev && !open && prev[j.id] === undefined) {   // 6.27: any new schedule (was flex only; only HOU8 shows spots)
         events.push({ j, ev, spots: '', kind: 'NEW · no spots yet' });
       }
     }
